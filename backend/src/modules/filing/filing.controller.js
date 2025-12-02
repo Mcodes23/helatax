@@ -1,9 +1,10 @@
 import Filing from "../../models/Filing.js";
 import { parseUserExcel } from "./fileParser.service.js";
 import { generateKraCsv } from "./kraGenerator.service.js";
-import { archiveFiling } from "../compliance/archive.service.js"; // Ensure this import exists
+import { archiveFiling } from "../compliance/archive.service.js";
 import logger from "../../utils/logger.js";
 
+// 1. Upload Filing
 export const uploadFiling = async (req, res) => {
   try {
     if (!req.file) throw new Error("No file uploaded");
@@ -11,7 +12,7 @@ export const uploadFiling = async (req, res) => {
     const { month, year } = req.body;
     const userTaxMode = req.user.tax_mode;
 
-    // 1. Create Initial Record
+    // Create Initial Record
     const filing = await Filing.create({
       user: req.user.id,
       month,
@@ -20,10 +21,10 @@ export const uploadFiling = async (req, res) => {
       raw_file_path: req.file.path,
     });
 
-    // 2. PARSE: Read the uploaded Excel
+    // Parse Excel
     const transactions = await parseUserExcel(req.file.path);
 
-    // 3. CALCULATE TOTALS
+    // Calculate Totals
     let totalIncome = 0;
     let totalExpense = 0;
 
@@ -39,17 +40,17 @@ export const uploadFiling = async (req, res) => {
       estimatedTax = Math.max(0, (totalIncome - totalExpense) * 0.3);
     }
 
-    // 4. GENERATE: Create the KRA CSV
+    // Generate CSV
     const kraFilePath = await generateKraCsv(
       filing._id,
       transactions,
       userTaxMode
     );
 
-    // 5. ARCHIVE (Compliance)
+    // Archive to Vault
     await archiveFiling(req.user.id, filing._id, req.file.path);
 
-    // 6. UPDATE DB
+    // Update DB
     filing.gross_turnover = totalIncome;
     filing.total_expenses = totalExpense;
     filing.tax_due = estimatedTax;
@@ -59,12 +60,11 @@ export const uploadFiling = async (req, res) => {
 
     logger.info(`Filing Processed: User ${req.user.id} owes ${estimatedTax}`);
 
-    // 7. SEND RESPONSE (CRITICAL FIX: Include parsedData!)
     res.status(201).json({
       success: true,
       message: "File processed successfully",
-      filingId: filing._id, // Send ID directly
-      parsedData: transactions, // <--- SEND THE ROWS BACK!
+      filingId: filing._id,
+      parsedData: transactions,
       taxSummary: {
         income: totalIncome,
         expense: totalExpense,
@@ -77,8 +77,7 @@ export const uploadFiling = async (req, res) => {
   }
 };
 
-// @desc    Download KRA CSV
-// @route   GET /api/v1/filing/download/:id
+// 2. Download KRA CSV (This was likely missing or cut off)
 export const downloadFiling = async (req, res) => {
   try {
     const filing = await Filing.findById(req.params.id);
@@ -96,13 +95,12 @@ export const downloadFiling = async (req, res) => {
   }
 };
 
-// @desc    Get User's Filing History
-// @route   GET /api/v1/filing/history
+// 3. Get History (This allows the history page to load)
 export const getHistory = async (req, res) => {
   try {
     const filings = await Filing.find({ user: req.user.id }).sort({
       createdAt: -1,
-    }); // Newest first
+    });
 
     res.json({
       success: true,
