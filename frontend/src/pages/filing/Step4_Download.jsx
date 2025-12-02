@@ -1,24 +1,22 @@
-import { CheckCircle, Download, Home } from "lucide-react";
+import { CheckCircle, Download, Home, FileText } from "lucide-react"; // <--- Added FileText icon
 import { useNavigate } from "react-router-dom";
 import { useFiling } from "../../context/FilingContext";
-import apiClient from "../../api/axiosConfig"; // Use our configured axios
+import apiClient from "../../api/axiosConfig";
 import Navbar from "../../components/layout/Navbar";
+import jsPDF from "jspdf"; // <--- Import PDF Library
+import "jspdf-autotable"; // <--- Import Table Plugin
 
 const Step4_Download = () => {
   const navigate = useNavigate();
   const { filingData } = useFiling();
 
-  const handleDownload = async () => {
+  // 1. Existing CSV Download Logic
+  const handleDownloadCsv = async () => {
     try {
-      // We request the file from the backend using the filingId
       const response = await apiClient.get(
         `/filing/download/${filingData.filingId}`,
-        {
-          responseType: "blob", // Important for file downloads
-        }
+        { responseType: "blob" }
       );
-
-      // Create a link to download the file
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement("a");
       link.href = url;
@@ -30,6 +28,52 @@ const Step4_Download = () => {
       console.error("Download failed", error);
       alert("Could not download file. Please try again.");
     }
+  };
+
+  // 2. NEW: Generate PDF Receipt
+  const handleDownloadPdf = () => {
+    const doc = new jsPDF();
+    const { taxSummary, filingId } = filingData;
+
+    // A. Header
+    doc.setFontSize(22);
+    doc.setTextColor(15, 23, 42); // Brand Color (Slate-900)
+    doc.text("HelaTax Filing Receipt", 14, 20);
+
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(`Filing Reference: ${filingId || "N/A"}`, 14, 28);
+    doc.text(`Date Generated: ${new Date().toDateString()}`, 14, 34);
+
+    // B. The Table
+    if (taxSummary) {
+      doc.autoTable({
+        startY: 45,
+        head: [["Item", "Value (KES)"]],
+        body: [
+          ["Total Declared Income", taxSummary.income.toLocaleString()],
+          ["Allowable Expenses", taxSummary.expense.toLocaleString()],
+          ["Tax Rate Applied", "Standard Rate (Based on Mode)"],
+          ["TOTAL TAX DUE", taxSummary.tax.toLocaleString()],
+        ],
+        theme: "grid",
+        headStyles: { fillColor: [16, 185, 129] }, // Green (Action Color)
+        styles: { fontSize: 12, cellPadding: 6 },
+      });
+    }
+
+    // C. Footer
+    const finalY = doc.lastAutoTable.finalY || 100;
+    doc.setFontSize(10);
+    doc.setTextColor(150);
+    doc.text(
+      "This document is a summary of your prepared return.",
+      14,
+      finalY + 10
+    );
+    doc.text("Please retain this for your records.", 14, finalY + 16);
+
+    doc.save(`Receipt_${filingId}.pdf`);
   };
 
   return (
@@ -48,26 +92,32 @@ const Step4_Download = () => {
         </p>
 
         <div className="flex flex-col sm:flex-row gap-4">
+          {/* Primary Action: Get the KRA File */}
           <button
-            onClick={handleDownload}
+            onClick={handleDownloadCsv}
             className="bg-brand hover:bg-brand-light text-white px-8 py-4 rounded-xl font-bold flex items-center gap-2 shadow-lg transition-all"
           >
             <Download className="w-5 h-5" />
             Download KRA CSV
           </button>
 
+          {/* Secondary Action: Get Receipt */}
           <button
-            onClick={() => navigate("/dashboard")}
-            className="bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 px-8 py-4 rounded-xl font-bold flex items-center gap-2 transition-all"
+            onClick={handleDownloadPdf}
+            className="bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 px-8 py-4 rounded-xl font-bold flex items-center gap-2 transition-all shadow-sm"
           >
-            <Home className="w-5 h-5" />
-            Back to Dashboard
+            <FileText className="w-5 h-5 text-blue-600" />
+            Download Receipt
           </button>
         </div>
 
-        <p className="mt-8 text-xs text-slate-400">
-          A copy of this return has been saved to your secure audit trail.
-        </p>
+        <button
+          onClick={() => navigate("/dashboard")}
+          className="mt-8 text-slate-400 hover:text-brand text-sm font-medium flex items-center gap-1"
+        >
+          <Home className="w-4 h-4" />
+          Return to Dashboard
+        </button>
       </div>
     </div>
   );

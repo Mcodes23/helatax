@@ -15,6 +15,13 @@ export const authApi = {
     return response.data;
   },
 
+  updateMode: async (taxMode) => {
+    const response = await apiClient.put("/auth/update-mode", {
+      tax_mode: taxMode,
+    });
+    return response.data;
+  },
+
   // 3. Logout (Simple cleanup)
   logout: () => {
     localStorage.removeItem("token");

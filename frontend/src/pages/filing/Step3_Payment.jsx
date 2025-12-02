@@ -1,14 +1,17 @@
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Copy, ArrowRight } from "lucide-react";
+import { Copy, ArrowRight, Loader } from "lucide-react"; // Added Loader
 import { useFiling } from "../../context/FilingContext";
 import Navbar from "../../components/layout/Navbar";
+import { filingApi } from "../../api/filingApi"; // Import API
 
 const Step3_Payment = () => {
   const navigate = useNavigate();
   const { filingData } = useFiling();
-  const { taxSummary } = filingData;
+  const { taxSummary, filingId } = filingData; // Get filingId
+  const [loading, setLoading] = useState(false); // Loading state
 
-  // Safety: If user refreshes and loses data, send them back
+  // Safety Check
   if (!taxSummary) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
@@ -24,6 +27,24 @@ const Step3_Payment = () => {
       </div>
     );
   }
+
+  const handleSimulatePayment = async () => {
+    setLoading(true);
+    try {
+      // 1. Call Backend to mark as PAID
+      if (filingId) {
+        await filingApi.confirmPayment(filingId);
+      }
+
+      // 2. Navigate to Download Page
+      navigate("/filing/download");
+    } catch (error) {
+      console.error("Payment Confirmation Failed", error);
+      alert("System could not verify payment. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -113,11 +134,20 @@ const Step3_Payment = () => {
             </div>
 
             <button
-              onClick={() => navigate("/filing/download")} // Moves to final step
-              className="w-full mt-8 bg-action hover:bg-green-600 text-white font-bold py-4 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2"
+              onClick={handleSimulatePayment}
+              disabled={loading}
+              className="w-full mt-8 bg-action hover:bg-green-600 text-white font-bold py-4 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-50"
             >
-              I have Paid, Get My File
-              <ArrowRight className="w-5 h-5" />
+              {loading ? (
+                <>
+                  <Loader className="w-5 h-5 animate-spin" /> Verifying...
+                </>
+              ) : (
+                <>
+                  I have Paid, Get My File
+                  <ArrowRight className="w-5 h-5" />
+                </>
+              )}
             </button>
           </div>
         </div>

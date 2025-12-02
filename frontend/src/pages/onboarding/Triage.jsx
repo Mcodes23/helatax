@@ -7,15 +7,18 @@ import {
   Laptop,
   ArrowRight,
   AlertTriangle,
+  Loader, // <--- Added Loader import
 } from "lucide-react";
 import Navbar from "../../components/layout/Navbar";
 import Card from "../../components/common/Card";
+import { authApi } from "../../api/authApi"; // <--- Import API
 
 const Triage = () => {
   const navigate = useNavigate();
   const [selectedRole, setSelectedRole] = useState(null); // 'TRADER' or 'PROFESSIONAL'
   const [profession, setProfession] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false); // <--- Added Loading State
 
   // The Forbidden List (Client-Side Check for immediate feedback)
   const forbiddenKeywords = [
@@ -26,13 +29,13 @@ const Triage = () => {
     "architect",
   ];
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     if (!selectedRole) {
       setError("Please select a category to continue.");
       return;
     }
 
-    // 1. The Logic Check
+    // 1. The Logic Check (Client Side)
     if (
       selectedRole === "TRADER" &&
       forbiddenKeywords.some((k) => profession.toLowerCase().includes(k))
@@ -43,10 +46,26 @@ const Triage = () => {
       return;
     }
 
-    // 2. Success - Navigate (In real app, we POST to API here)
-    console.log("User Mode Locked:", selectedRole);
-    // navigate('/dashboard'); // We will build this next
-    alert(`Success! You are locked into ${selectedRole} Mode.`);
+    // 2. Call Backend to Save Choice
+    setLoading(true);
+    try {
+      const response = await authApi.updateMode(selectedRole);
+
+      if (response.success) {
+        // A. Update Local Storage so the Dashboard Switcher knows what to do
+        const currentUser = JSON.parse(localStorage.getItem("user"));
+        currentUser.tax_mode = selectedRole;
+        localStorage.setItem("user", JSON.stringify(currentUser));
+
+        // B. Force Navigate to Dashboard (Reload ensures context updates)
+        window.location.href = "/dashboard";
+      }
+    } catch (err) {
+      console.error(err);
+      setError("Failed to save your selection. Please try again.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -134,10 +153,19 @@ const Triage = () => {
         {/* --- CONTINUE BUTTON --- */}
         <button
           onClick={handleContinue}
-          className="w-full bg-brand hover:bg-brand-light text-white font-bold py-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2"
+          disabled={loading} // Disable button while processing
+          className="w-full bg-brand hover:bg-brand-light text-white font-bold py-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Continue to Dashboard
-          <ArrowRight className="w-5 h-5" />
+          {loading ? (
+            <>
+              <Loader className="w-5 h-5 animate-spin" /> Saving...
+            </>
+          ) : (
+            <>
+              Continue to Dashboard
+              <ArrowRight className="w-5 h-5" />
+            </>
+          )}
         </button>
       </div>
     </div>

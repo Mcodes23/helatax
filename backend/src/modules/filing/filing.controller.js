@@ -111,3 +111,41 @@ export const getHistory = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// backend/src/modules/filing/filing.controller.js
+
+// ... existing code ...
+
+// @desc    Mark filing as Paid/Submitted (Simulated)
+// @route   PUT /api/v1/filing/pay/:id
+export const confirmPayment = async (req, res) => {
+  try {
+    const filing = await Filing.findById(req.params.id);
+
+    if (!filing) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Filing not found" });
+    }
+
+    // Ensure user owns this filing
+    if (filing.user.toString() !== req.user.id) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Not authorized" });
+    }
+
+    // Update Status
+    filing.status = "SUBMITTED";
+    await filing.save();
+
+    logger.info(
+      `Filing ${filing._id} marked as SUBMITTED by user ${req.user.id}`
+    );
+
+    res.json({ success: true, message: "Payment confirmed", data: filing });
+  } catch (error) {
+    logger.error(`Payment Confirmation Error: ${error.message}`);
+    res.status(500).json({ success: false, message: error.message });
+  }
+};

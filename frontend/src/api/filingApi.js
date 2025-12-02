@@ -19,4 +19,9 @@ export const filingApi = {
     const response = await apiClient.get("/filing/history");
     return response.data;
   },
+
+  confirmPayment: async (filingId) => {
+    const response = await apiClient.put(`/filing/pay/${filingId}`);
+    return response.data;
+  },
 };
