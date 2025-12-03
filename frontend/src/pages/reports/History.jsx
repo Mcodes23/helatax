@@ -1,7 +1,14 @@
 import { useState, useEffect } from "react";
-import { FileText, Download, Calendar, Clock, Search } from "lucide-react";
+import {
+  FileText,
+  Download,
+  Calendar,
+  Clock,
+  Search,
+  CheckCircle2,
+} from "lucide-react"; // <--- Added CheckCircle2
 import { filingApi } from "../../api/filingApi";
-import apiClient from "../../api/axiosConfig"; // For direct download call
+import apiClient from "../../api/axiosConfig";
 
 const History = () => {
   const [filings, setFilings] = useState([]);
@@ -38,6 +45,20 @@ const History = () => {
       link.parentNode.removeChild(link);
     } catch (error) {
       alert("Download failed.");
+    }
+  };
+
+  // Helper for Status Styles
+  const getStatusStyle = (status) => {
+    switch (status) {
+      case "SUBMITTED":
+        return "bg-green-100 text-green-700 border border-green-200";
+      case "GENERATED":
+        return "bg-blue-50 text-blue-700 border border-blue-100";
+      case "DRAFT":
+        return "bg-yellow-50 text-yellow-700 border border-yellow-100";
+      default:
+        return "bg-slate-100 text-slate-600";
     }
   };
 
@@ -108,15 +129,13 @@ const History = () => {
                   </td>
                   <td className="p-4">
                     <span
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium
-                      ${
-                        file.status === "GENERATED"
-                          ? "bg-green-50 text-green-700 border border-green-100"
-                          : file.status === "DRAFT"
-                          ? "bg-yellow-50 text-yellow-700 border border-yellow-100"
-                          : "bg-slate-100 text-slate-600"
-                      }`}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold shadow-sm ${getStatusStyle(
+                        file.status
+                      )}`}
                     >
+                      {file.status === "SUBMITTED" && (
+                        <CheckCircle2 className="w-3 h-3" />
+                      )}
                       {file.status === "GENERATED" && (
                         <Clock className="w-3 h-3" />
                       )}

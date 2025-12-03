@@ -3,24 +3,22 @@ import { useNavigate } from "react-router-dom";
 import {
   Store,
   Briefcase,
-  Stethoscope,
-  Laptop,
   ArrowRight,
   AlertTriangle,
-  Loader, // <--- Added Loader import
+  Loader,
 } from "lucide-react";
 import Navbar from "../../components/layout/Navbar";
 import Card from "../../components/common/Card";
-import { authApi } from "../../api/authApi"; // <--- Import API
+import { authApi } from "../../api/authApi";
 
 const Triage = () => {
   const navigate = useNavigate();
   const [selectedRole, setSelectedRole] = useState(null); // 'TRADER' or 'PROFESSIONAL'
   const [profession, setProfession] = useState("");
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false); // <--- Added Loading State
+  const [loading, setLoading] = useState(false);
 
-  // The Forbidden List (Client-Side Check for immediate feedback)
+  // The Forbidden List (Client-Side Check)
   const forbiddenKeywords = [
     "doctor",
     "engineer",
@@ -52,12 +50,21 @@ const Triage = () => {
       const response = await authApi.updateMode(selectedRole);
 
       if (response.success) {
-        // A. Update Local Storage so the Dashboard Switcher knows what to do
-        const currentUser = JSON.parse(localStorage.getItem("user"));
-        currentUser.tax_mode = selectedRole;
-        localStorage.setItem("user", JSON.stringify(currentUser));
+        // --- FIX: Update Local Storage Correctly ---
+        // We merge the old session data with the new data from the backend.
+        // The backend sends back { has_confirmed_details: true, tax_mode: ... }
+        const oldUser = JSON.parse(localStorage.getItem("user")) || {};
 
-        // B. Force Navigate to Dashboard (Reload ensures context updates)
+        const updatedUser = {
+          ...oldUser,
+          ...response.data,
+          has_confirmed_details: true, // Explicitly force this to true to break the loop
+        };
+
+        localStorage.setItem("user", JSON.stringify(updatedUser));
+
+        // 3. Force Navigate to Dashboard
+        // Using window.location.href ensures the App component re-mounts and reads the new Local Storage
         window.location.href = "/dashboard";
       }
     } catch (err) {
@@ -153,7 +160,7 @@ const Triage = () => {
         {/* --- CONTINUE BUTTON --- */}
         <button
           onClick={handleContinue}
-          disabled={loading} // Disable button while processing
+          disabled={loading}
           className="w-full bg-brand hover:bg-brand-light text-white font-bold py-4 rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {loading ? (

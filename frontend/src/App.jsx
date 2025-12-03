@@ -28,18 +28,26 @@ import Step4_Download from "./pages/filing/Step4_Download";
 import AiAdvisor from "./pages/dashboard/AiAdvisor";
 import History from "./pages/reports/History";
 
-// --- HELPER COMPONENT: The Dashboard Switcher ---
 const DashboardSwitcher = () => {
   const userString = localStorage.getItem("user");
   const user = userString ? JSON.parse(userString) : null;
 
   if (!user) return <Navigate to="/login" replace />;
 
+  // --- NEW CHECK ---
+  // If they haven't clicked "Continue" on Triage yet, force them there.
+  if (user.has_confirmed_details === false) {
+    return <Navigate to="/onboarding" replace />;
+  }
+  // -----------------
+
   if (user.tax_mode === "TRADER") return <TraderHome />;
   if (user.tax_mode === "PROFESSIONAL") return <ProHome />;
 
   return <Navigate to="/onboarding" replace />;
 };
+
+// ... rest of App component
 
 // --- MAIN APP COMPONENT ---
 function App() {

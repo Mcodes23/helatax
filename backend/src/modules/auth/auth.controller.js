@@ -40,25 +40,31 @@ export const login = async (req, res) => {
 
 // @desc    Update User Tax Mode (Triage Fix)
 // @route   PUT /api/v1/auth/update-mode
+// backend/src/modules/auth/auth.controller.js
+
+// ...
+
 export const updateTaxMode = async (req, res) => {
   try {
     const { tax_mode } = req.body;
-    const user = req.user; // Comes from 'protect' middleware
+    const user = req.user;
 
-    // 1. Validate Input
     if (!["TRADER", "PROFESSIONAL"].includes(tax_mode)) {
       return res
         .status(400)
         .json({ success: false, message: "Invalid Tax Mode" });
     }
 
-    // 2. Update & Save
+    // 1. Update Mode
     user.tax_mode = tax_mode;
+
+    // 2. Mark as Confirmed (This prevents showing Triage again)
+    user.has_confirmed_details = true;
+
     await user.save();
 
-    logger.info(`User ${user.email} manually switched to ${tax_mode}`);
+    logger.info(`User ${user.email} confirmed role as ${tax_mode}`);
 
-    // 3. Return Updated User (So frontend can update context)
     res.json({
       success: true,
       data: {
@@ -66,7 +72,7 @@ export const updateTaxMode = async (req, res) => {
         name: user.name,
         email: user.email,
         tax_mode: user.tax_mode,
-        // We don't need to issue a new token, just confirm the change
+        has_confirmed_details: user.has_confirmed_details, // Send this back
       },
     });
   } catch (error) {

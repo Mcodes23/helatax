@@ -18,6 +18,7 @@ const UserSchema = new mongoose.Schema({
     required: true,
   },
 
+  has_confirmed_details: { type: Boolean, default: false },
   // Obligation Flags (For the Dashboard UI)
   obligations: {
     is_vat_registered: { type: Boolean, default: false },

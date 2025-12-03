@@ -11,15 +11,20 @@ const Step2_Review = () => {
 
   const [transactions, setTransactions] = useState([]);
   const [summary, setSummary] = useState({ income: 0, expense: 0, tax: 0 });
+  const [taxMode, setTaxMode] = useState("TRADER"); // Default
 
-  // 1. Load data on mount
+  // 1. Load Data & User Mode on Mount
   useEffect(() => {
-    // Case A: Data passed via Navigation (Fresh Upload)
-    if (location.state?.parsedData) {
-      console.log("Loaded data from Navigation State");
-      setTransactions(location.state.parsedData);
+    // Get Tax Mode from Storage
+    const userString = localStorage.getItem("user");
+    if (userString) {
+      const user = JSON.parse(userString);
+      setTaxMode(user.tax_mode || "TRADER");
+    }
 
-      // ✅ FIX: Only update Context if the ID is different (Prevents Loop)
+    // Load Transactions
+    if (location.state?.parsedData) {
+      setTransactions(location.state.parsedData);
       if (filingData.filingId !== location.state.filingId) {
         updateFiling({
           parsedData: location.state.parsedData,
@@ -27,18 +32,12 @@ const Step2_Review = () => {
           filingId: location.state.filingId,
         });
       }
-    }
-    // Case B: Data exists in Context (Refresh/Back Button)
-    else if (filingData?.parsedData?.length > 0) {
-      console.log("Loaded data from Context");
+    } else if (filingData?.parsedData?.length > 0) {
       setTransactions(filingData.parsedData);
-    } else {
-      console.warn("No data found, redirecting...");
-      // navigate('/filing');
     }
-  }, [location.state, filingData.filingId, navigate, updateFiling]);
+  }, [location.state, filingData.filingId, updateFiling]);
 
-  // 2. Auto-Calculate Totals
+  // 2. Auto-Calculate Totals (The Fixed Logic)
   useEffect(() => {
     let inc = 0;
     let exp = 0;
@@ -54,12 +53,24 @@ const Step2_Review = () => {
       }
     });
 
-    // 3% Turnover Tax Logic
-    let estimatedTax = inc * 0.03 - wht;
+    let estimatedTax = 0;
+
+    // --- FIX START: Dynamic Calculation ---
+    if (taxMode === "PROFESSIONAL") {
+      // 30% on Net Profit (Income - Expense)
+      // Note: WHT is usually a credit, but for simplicity we verify the base tax first
+      const profit = Math.max(0, inc - exp);
+      estimatedTax = profit * 0.3;
+    } else {
+      // TRADER: 3% on Gross Sales
+      estimatedTax = inc * 0.03 - wht;
+    }
+
     if (estimatedTax < 0) estimatedTax = 0;
+    // --- FIX END ---
 
     setSummary({ income: inc, expense: exp, tax: estimatedTax });
-  }, [transactions]);
+  }, [transactions, taxMode]); // Re-run when taxMode is loaded
 
   // --- HANDLERS ---
   const handleRowChange = (index, field, value) => {
@@ -117,7 +128,13 @@ const Step2_Review = () => {
             <p className="text-xs font-bold text-slate-400 uppercase">
               Allowable Expenses
             </p>
-            <p className="text-xl font-bold text-red-500">
+            <p
+              className={`text-xl font-bold ${
+                taxMode === "PROFESSIONAL"
+                  ? "text-red-500"
+                  : "text-slate-300 line-through"
+              }`}
+            >
               - {summary.expense.toLocaleString()}
             </p>
           </div>
@@ -125,7 +142,9 @@ const Step2_Review = () => {
             <p className="text-xs font-bold text-blue-500 uppercase">
               Tax Mode
             </p>
-            <p className="text-xl font-bold text-blue-700">Trader (3%)</p>
+            <p className="text-xl font-bold text-blue-700 capitalize">
+              {taxMode === "PROFESSIONAL" ? "Income Tax (30%)" : "Trader (3%)"}
+            </p>
           </div>
         </div>
 

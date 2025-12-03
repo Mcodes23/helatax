@@ -49,6 +49,7 @@ export const registerUser = async (userData) => {
   const taxMode = determineTaxMode(profession, businessType);
 
   // Create User
+  // Note: has_confirmed_details defaults to false in the Schema, but we can be explicit here
   const user = await User.create({
     name,
     email,
@@ -56,6 +57,7 @@ export const registerUser = async (userData) => {
     kra_pin,
     profession,
     tax_mode: taxMode, // <--- System sets this, not the user!
+    has_confirmed_details: false, // <--- User must confirm this on Triage page
     obligations: {
       is_vat_registered: false,
       has_mortgage: false,
@@ -66,7 +68,8 @@ export const registerUser = async (userData) => {
     _id: user._id,
     name: user.name,
     email: user.email,
-    tax_mode: user.tax_mode, // Send this back so Frontend knows which Dashboard to show
+    tax_mode: user.tax_mode,
+    has_confirmed_details: user.has_confirmed_details, // <--- SEND FLAG TO FRONTEND
     token: generateToken(user._id),
   };
 };
@@ -81,6 +84,7 @@ export const loginUser = async (email, password) => {
       name: user.name,
       email: user.email,
       tax_mode: user.tax_mode,
+      has_confirmed_details: user.has_confirmed_details, // <--- SEND FLAG TO FRONTEND
       token: generateToken(user._id),
     };
   } else {

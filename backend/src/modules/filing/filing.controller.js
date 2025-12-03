@@ -12,6 +12,13 @@ export const uploadFiling = async (req, res) => {
     const { month, year } = req.body;
     const userTaxMode = req.user.tax_mode;
 
+    // --- DEBUG LOGS (Added to catch the Phantom User) ---
+    logger.info(
+      `🔍 DEBUG: Filing for User: ${req.user.name} (${req.user.email})`
+    );
+    logger.info(`🔍 DEBUG: Database Tax Mode: ${userTaxMode}`);
+    // ----------------------------------------------------
+
     // Create Initial Record
     const filing = await Filing.create({
       user: req.user.id,
@@ -77,7 +84,7 @@ export const uploadFiling = async (req, res) => {
   }
 };
 
-// 2. Download KRA CSV (This was likely missing or cut off)
+// 2. Download KRA CSV
 export const downloadFiling = async (req, res) => {
   try {
     const filing = await Filing.findById(req.params.id);
@@ -95,7 +102,7 @@ export const downloadFiling = async (req, res) => {
   }
 };
 
-// 3. Get History (This allows the history page to load)
+// 3. Get History
 export const getHistory = async (req, res) => {
   try {
     const filings = await Filing.find({ user: req.user.id }).sort({
@@ -112,12 +119,7 @@ export const getHistory = async (req, res) => {
   }
 };
 
-// backend/src/modules/filing/filing.controller.js
-
-// ... existing code ...
-
-// @desc    Mark filing as Paid/Submitted (Simulated)
-// @route   PUT /api/v1/filing/pay/:id
+// 4. Confirm Payment (Closing the Loop)
 export const confirmPayment = async (req, res) => {
   try {
     const filing = await Filing.findById(req.params.id);

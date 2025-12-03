@@ -1,5 +1,6 @@
 import Card from "../../components/common/Card";
 import { TrendingUp, AlertCircle, Upload } from "lucide-react";
+import { Link } from "react-router-dom"; // <--- 1. IMPORT THIS
 
 const TraderHome = () => {
   return (
@@ -72,10 +73,15 @@ const TraderHome = () => {
             Upload your daily sales Excel or CSV file. Our AI will extract the
             totals and calculate your 3% liability instantly.
           </p>
-          <button className="bg-brand hover:bg-brand-light text-white px-8 py-4 rounded-xl font-bold transition-all shadow-lg hover:shadow-xl flex items-center gap-2">
+
+          {/* --- FIX IS HERE: Changed <button> to <Link> --- */}
+          <Link
+            to="/filing"
+            className="bg-brand hover:bg-brand-light text-white px-8 py-4 rounded-xl font-bold transition-all shadow-lg hover:shadow-xl flex items-center gap-2"
+          >
             <Upload className="w-5 h-5" />
             Upload Sales Record
-          </button>
+          </Link>
         </div>
 
         {/* Quick Tips */}
