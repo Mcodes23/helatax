@@ -6,6 +6,7 @@ import authRoutes from "./modules/auth/auth.routes.js";
 import taxRoutes from "./modules/tax_rules/tax.routes.js";
 import filingRoutes from "./modules/filing/filing.routes.js";
 import aiRoutes from "./modules/ai_advisor/ai.routes.js";
+import notificationRoutes from "./modules/notifications/notification.routes.js"; // <--- 1. Import
 
 const app = express();
 
@@ -28,6 +29,7 @@ app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/tax-rules", taxRoutes);
 app.use("/api/v1/filing", filingRoutes);
 app.use("/api/v1/ai", aiRoutes);
+app.use("/api/v1/notifications", notificationRoutes); // <--- 2. Add Route
 
 // 404 Handler
 app.use((req, res) => {

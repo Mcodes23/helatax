@@ -5,28 +5,21 @@ import {
   Navigate,
 } from "react-router-dom";
 
-// 1. Public Pages
 import Landing from "./pages/public/Landing";
 import Login from "./pages/auth/Login";
 import Register from "./pages/auth/Register";
-
-// 2. Onboarding (The Gatekeeper)
 import Triage from "./pages/onboarding/Triage";
-
-// 3. Dashboard Pages
 import DashboardLayout from "./pages/dashboard/DashboardLayout";
 import TraderHome from "./pages/dashboard/TraderHome";
 import ProHome from "./pages/dashboard/ProHome";
 import ProtectedRoute from "./components/layout/ProtectedRoute";
-
-// 4. Filing Wizard Pages
 import Step1_Upload from "./pages/filing/Step1_Upload";
 import Step2_Review from "./pages/filing/Step2_Review";
 import Step3_Payment from "./pages/filing/Step3_Payment";
 import Step4_Download from "./pages/filing/Step4_Download";
-
 import AiAdvisor from "./pages/dashboard/AiAdvisor";
 import History from "./pages/reports/History";
+import Settings from "./pages/dashboard/Settings"; // <--- 1. IMPORT SETTINGS
 
 const DashboardSwitcher = () => {
   const userString = localStorage.getItem("user");
@@ -34,12 +27,9 @@ const DashboardSwitcher = () => {
 
   if (!user) return <Navigate to="/login" replace />;
 
-  // --- NEW CHECK ---
-  // If they haven't clicked "Continue" on Triage yet, force them there.
   if (user.has_confirmed_details === false) {
     return <Navigate to="/onboarding" replace />;
   }
-  // -----------------
 
   if (user.tax_mode === "TRADER") return <TraderHome />;
   if (user.tax_mode === "PROFESSIONAL") return <ProHome />;
@@ -47,21 +37,14 @@ const DashboardSwitcher = () => {
   return <Navigate to="/onboarding" replace />;
 };
 
-// ... rest of App component
-
-// --- MAIN APP COMPONENT ---
 function App() {
   return (
     <Router>
       <Routes>
-        {/* --- PUBLIC ROUTES --- */}
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
 
-        {/* --- PROTECTED ROUTES --- */}
-
-        {/* Onboarding */}
         <Route
           path="/onboarding"
           element={
@@ -71,7 +54,6 @@ function App() {
           }
         />
 
-        {/* Dashboard & Filing Layout (Sidebar + Header) */}
         <Route
           path="/"
           element={
@@ -80,11 +62,9 @@ function App() {
             </ProtectedRoute>
           }
         >
-          {/* Dashboard Home */}
           <Route path="dashboard" element={<DashboardSwitcher />} />
-
-          {/* Filing Wizard Routes (Nested under Layout) */}
-          {/* Filing Wizard Routes */}
+          <Route path="profile" element={<Settings />} />{" "}
+          {/* <--- 2. ADD ROUTE HERE */}
           <Route path="/filing">
             <Route
               index
@@ -123,7 +103,6 @@ function App() {
           <Route path="/ai-chat" element={<AiAdvisor />} />
         </Route>
 
-        {/* 404 Catch-All */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Router>

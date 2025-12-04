@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate, Outlet, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -13,8 +13,12 @@ import {
   Settings,
   Search,
   ShieldCheck,
+  CheckCircle,
+  AlertTriangle,
+  Info,
 } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
+import apiClient from "../../api/axiosConfig"; // <--- Import API Client
 
 const DashboardLayout = () => {
   const navigate = useNavigate();
@@ -23,12 +27,60 @@ const DashboardLayout = () => {
   const [isSidebarOpen, setSidebarOpen] = useState(true);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
 
+  // --- NOTIFICATION STATE ---
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifMenu, setShowNotifMenu] = useState(false);
+  const unreadCount = notifications.filter((n) => !n.isRead).length;
+
+  // --- POLLING EFFECT ---
+  useEffect(() => {
+    const fetchNotifications = async () => {
+      try {
+        const response = await apiClient.get("/notifications");
+        if (response.data.success) {
+          setNotifications(response.data.data);
+        }
+      } catch (error) {
+        console.error("Notification fetch error", error);
+      }
+    };
+
+    fetchNotifications(); // Fetch immediately
+    const interval = setInterval(fetchNotifications, 30000); // Then every 30s
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleMarkAsRead = async (id) => {
+    try {
+      await apiClient.put(`/notifications/${id}/read`);
+      // Update local state to remove the "unread" status visually
+      setNotifications((prev) =>
+        prev.map((n) => (n._id === id ? { ...n, isRead: true } : n))
+      );
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   const handleLogout = () => {
     logout();
     navigate("/login");
   };
 
   const isActive = (path) => location.pathname === path;
+
+  // Helper for Icons
+  const getNotifIcon = (type) => {
+    switch (type) {
+      case "SUCCESS":
+        return <CheckCircle className="w-4 h-4 text-green-500" />;
+      case "WARNING":
+        return <AlertTriangle className="w-4 h-4 text-orange-500" />;
+      default:
+        return <Info className="w-4 h-4 text-blue-500" />;
+    }
+  };
 
   return (
     <div className="min-h-screen bg-slate-50 flex font-sans text-slate-900">
@@ -38,7 +90,6 @@ const DashboardLayout = () => {
           isSidebarOpen ? "translate-x-0" : "-translate-x-full"
         } lg:relative lg:translate-x-0 shadow-xl flex flex-col`}
       >
-        {/* Logo Area - FIXED ALIGNMENT */}
         <div className="h-20 flex items-center px-6 border-b border-slate-800 bg-brand-light shrink-0">
           <Link to="/dashboard" className="flex items-center gap-3 group">
             <div className="bg-white/10 p-2 rounded-lg group-hover:bg-white/20 transition-colors flex-shrink-0">
@@ -50,7 +101,6 @@ const DashboardLayout = () => {
           </Link>
         </div>
 
-        {/* Navigation */}
         <nav className="flex-1 p-4 space-y-2 overflow-y-auto py-6">
           <p className="px-4 text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
             Menu
@@ -71,7 +121,7 @@ const DashboardLayout = () => {
           <Link
             to="/filing"
             className={`flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all ${
-              isActive("/filing")
+              isActive("/filing") || location.pathname.includes("/filing")
                 ? "bg-action text-white shadow-lg"
                 : "text-slate-400 hover:text-white hover:bg-white/5"
             }`}
@@ -109,15 +159,13 @@ const DashboardLayout = () => {
           </Link>
         </nav>
 
-        {/* Sidebar Footer */}
         <div className="p-4 text-xs text-center text-slate-600 border-t border-slate-800">
           v1.0.0 &copy; 2025
         </div>
       </aside>
 
-      {/* --- MAIN CONTENT WRAPPER --- */}
+      {/* --- MAIN CONTENT --- */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden">
-        {/* Top Navbar */}
         <header className="h-20 bg-white border-b border-slate-200 flex justify-between items-center px-8 z-20 shadow-sm shrink-0">
           <div className="flex items-center gap-4">
             <button
@@ -142,11 +190,74 @@ const DashboardLayout = () => {
           </div>
 
           <div className="flex items-center gap-6">
-            <button className="relative p-2 text-slate-400 hover:text-brand hover:bg-slate-50 rounded-full transition-all">
-              <Bell className="w-6 h-6" />
-              <span className="absolute top-2 right-2 h-2.5 w-2.5 bg-red-500 border-2 border-white rounded-full"></span>
-            </button>
+            {/* --- NOTIFICATION BELL --- */}
+            <div className="relative">
+              <button
+                onClick={() => setShowNotifMenu(!showNotifMenu)}
+                className="relative p-2 text-slate-400 hover:text-brand hover:bg-slate-50 rounded-full transition-all"
+              >
+                <Bell className="w-6 h-6" />
+                {unreadCount > 0 && (
+                  <span className="absolute top-2 right-2 h-2.5 w-2.5 bg-red-500 border-2 border-white rounded-full animate-pulse"></span>
+                )}
+              </button>
 
+              {/* Dropdown */}
+              {showNotifMenu && (
+                <>
+                  <div
+                    className="fixed inset-0 z-10"
+                    onClick={() => setShowNotifMenu(false)}
+                  ></div>
+                  <div className="absolute right-0 mt-3 w-80 bg-white rounded-xl shadow-xl border border-slate-100 py-2 z-20 overflow-hidden">
+                    <div className="px-4 py-3 border-b border-slate-100 bg-slate-50">
+                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                        Notifications
+                      </p>
+                    </div>
+                    <div className="max-h-72 overflow-y-auto">
+                      {notifications.length === 0 ? (
+                        <div className="p-6 text-center">
+                          <p className="text-sm text-slate-400">
+                            No new alerts
+                          </p>
+                        </div>
+                      ) : (
+                        notifications.map((n) => (
+                          <div
+                            key={n._id}
+                            onClick={() => handleMarkAsRead(n._id)}
+                            className={`px-4 py-3 border-b border-slate-50 hover:bg-slate-50 transition-colors cursor-pointer ${
+                              !n.isRead ? "bg-blue-50/40" : ""
+                            }`}
+                          >
+                            <div className="flex gap-3">
+                              <div className="mt-1">{getNotifIcon(n.type)}</div>
+                              <div>
+                                <p
+                                  className={`text-sm ${
+                                    !n.isRead
+                                      ? "font-semibold text-slate-800"
+                                      : "text-slate-600"
+                                  }`}
+                                >
+                                  {n.message}
+                                </p>
+                                <p className="text-xs text-slate-400 mt-1">
+                                  {new Date(n.createdAt).toLocaleDateString()}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* --- PROFILE MENU --- */}
             <div className="relative">
               <button
                 onClick={() => setShowProfileMenu(!showProfileMenu)}
@@ -176,7 +287,7 @@ const DashboardLayout = () => {
                     className="fixed inset-0 z-10"
                     onClick={() => setShowProfileMenu(false)}
                   ></div>
-                  <div className="absolute right-0 mt-3 w-56 bg-white rounded-xl shadow-xl border border-slate-100 py-2 z-20 animate-in fade-in zoom-in-95 duration-200">
+                  <div className="absolute right-0 mt-3 w-56 bg-white rounded-xl shadow-xl border border-slate-100 py-2 z-20">
                     <div className="px-4 py-3 border-b border-slate-100 mb-2">
                       <p className="text-xs text-slate-400 uppercase font-bold">
                         Account
@@ -205,7 +316,6 @@ const DashboardLayout = () => {
           </div>
         </header>
 
-        {/* Scrollable Content */}
         <main className="flex-1 overflow-y-auto bg-slate-50 p-8">
           <div className="max-w-6xl mx-auto">
             <Outlet />

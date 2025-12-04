@@ -1,12 +1,15 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom"; // Added useLocation
 import { Mail, Lock, ArrowRight, Loader } from "lucide-react";
-import { authApi } from "../../api/authApi";
+import { useAuth } from "../../context/AuthContext"; // <--- IMPORT CONTEXT
 
 const Login = () => {
   const navigate = useNavigate();
+  const location = useLocation(); // To redirect back to where they came from
+  const { login } = useAuth(); // <--- GET LOGIN FUNCTION FROM CONTEXT
+
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(""); // Added error state
+  const [error, setError] = useState("");
   const [formData, setFormData] = useState({ email: "", password: "" });
 
   const handleSubmit = async (e) => {
@@ -15,32 +18,26 @@ const Login = () => {
     setError("");
 
     try {
-      // 1. Call Backend API
-      // The API returns: { success: true, data: { token: "...", name: "...", ... } }
-      const response = await authApi.login(formData);
-      console.log("Login Raw Response:", response);
+      // 1. Use the Context Login (This updates the Global State!)
+      const user = await login(formData);
 
-      if (response.success) {
-        // 2. Extract Data Correctly (FIXED HERE)
-        const userData = response.data;
-        const token = userData.token;
-
-        // 3. Save Token & User
-        localStorage.setItem("token", token);
-        localStorage.setItem("user", JSON.stringify(userData));
-
-        // 4. Redirect to Dashboard
-        navigate("/dashboard");
+      // 2. Check Triage Status
+      if (user.has_confirmed_details === false) {
+        navigate("/onboarding");
       } else {
-        setError("Login failed. Please try again.");
+        // Redirect to intended page or dashboard
+        const from = location.state?.from?.pathname || "/dashboard";
+        navigate(from, { replace: true });
       }
     } catch (err) {
       console.error("Login Error:", err);
-      setError(err.response?.data?.message || "Invalid email or password.");
+      // Handle the specific error message from the Context/API
+      setError(err.message || "Invalid email or password.");
     } finally {
       setLoading(false);
     }
   };
+
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
       <div className="flex-grow flex items-center justify-center px-4 py-20">
@@ -52,7 +49,6 @@ const Login = () => {
             </p>
           </div>
 
-          {/* Error Alert */}
           {error && (
             <div className="mb-6 p-3 bg-red-50 border border-red-200 text-red-600 text-sm rounded-lg">
               {error}
@@ -60,7 +56,6 @@ const Login = () => {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-5">
-            {/* Email Field */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">
                 Email Address
@@ -82,7 +77,6 @@ const Login = () => {
               </div>
             </div>
 
-            {/* Password Field */}
             <div>
               <div className="flex justify-between mb-1">
                 <label className="block text-sm font-medium text-slate-700">
