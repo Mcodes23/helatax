@@ -3,6 +3,8 @@ import { parseUserExcel } from "./fileParser.service.js";
 import { generateKraCsv } from "./kraGenerator.service.js";
 import { archiveFiling } from "../compliance/archive.service.js";
 import logger from "../../utils/logger.js";
+// 1. ADD IMPORT
+import { createNotification } from "../notifications/notification.controller.js";
 
 // 1. Upload Filing
 export const uploadFiling = async (req, res) => {
@@ -16,7 +18,7 @@ export const uploadFiling = async (req, res) => {
     logger.info(
       `🔍 DEBUG: Filing for User: ${req.user.name} (${req.user.email})`
     );
-    logger.info(`🔍 DEBUG: Database Tax Mode: ${userTaxMode}`);
+    logger.info(`DEBUG: Database Tax Mode: ${userTaxMode}`);
     // ----------------------------------------------------
 
     // Create Initial Record
@@ -66,6 +68,13 @@ export const uploadFiling = async (req, res) => {
     await filing.save();
 
     logger.info(`Filing Processed: User ${req.user.id} owes ${estimatedTax}`);
+
+    // 2. ADD NOTIFICATION TRIGGER
+    await createNotification(
+      req.user.id,
+      `Filing processed! Tax Due: KES ${estimatedTax.toLocaleString()}`,
+      "INFO"
+    );
 
     res.status(201).json({
       success: true,
@@ -143,6 +152,13 @@ export const confirmPayment = async (req, res) => {
 
     logger.info(
       `Filing ${filing._id} marked as SUBMITTED by user ${req.user.id}`
+    );
+
+    // 3. ADD NOTIFICATION TRIGGER
+    await createNotification(
+      req.user.id,
+      `Payment confirmed for ${filing.month} return. Reference: ${filing._id}`,
+      "SUCCESS"
     );
 
     res.json({ success: true, message: "Payment confirmed", data: filing });

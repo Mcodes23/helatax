@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 
 const AuditLogSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-  action: { type: String, required: true }, // e.g., "ARCHIVE_GENERATED"
+  action: { type: String, required: true },
 
   entity_id: { type: String },
   entity_type: { type: String },

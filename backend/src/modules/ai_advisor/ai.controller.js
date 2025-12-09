@@ -4,9 +4,8 @@ import { askAiAdvisor } from "./rag.service.js";
 // @route   POST /api/v1/ai/chat
 export const chatWithAi = async (req, res) => {
   try {
-    const { sanitizedQuestion } = req.body; // Comes from Sanitizer Middleware
+    const { sanitizedQuestion } = req.body;
 
-    // Get context from the logged-in user
     const userContext = {
       profession: req.user.profession,
       tax_mode: req.user.tax_mode,

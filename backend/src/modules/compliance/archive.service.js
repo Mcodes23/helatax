@@ -3,7 +3,7 @@ import path from "path";
 import AuditLog from "./auditLog.model.js";
 import logger from "../../utils/logger.js";
 
-const VAULT_DIR = "vault/"; // This folder simulates secure cold storage
+const VAULT_DIR = "vault/";
 
 // Ensure Vault exists
 if (!fs.existsSync(VAULT_DIR)) {

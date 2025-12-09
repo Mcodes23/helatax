@@ -58,7 +58,6 @@ export const updateTaxMode = async (req, res) => {
     // 1. Update Mode
     user.tax_mode = tax_mode;
 
-    // 2. Mark as Confirmed (This prevents showing Triage again)
     user.has_confirmed_details = true;
 
     await user.save();
@@ -72,7 +71,7 @@ export const updateTaxMode = async (req, res) => {
         name: user.name,
         email: user.email,
         tax_mode: user.tax_mode,
-        has_confirmed_details: user.has_confirmed_details, // Send this back
+        has_confirmed_details: user.has_confirmed_details,
       },
     });
   } catch (error) {

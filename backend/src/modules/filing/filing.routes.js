@@ -7,7 +7,7 @@ import {
   uploadFiling,
   downloadFiling,
   getHistory,
-  confirmPayment, // <--- 1. Import this
+  confirmPayment,
 } from "./filing.controller.js";
 
 const router = express.Router();
@@ -15,6 +15,6 @@ const router = express.Router();
 router.post("/upload", protect, upload.single("file"), uploadFiling);
 router.get("/download/:id", protect, downloadFiling);
 router.get("/history", protect, getHistory);
-router.put("/pay/:id", protect, confirmPayment); // <--- 2. Add this route
+router.put("/pay/:id", protect, confirmPayment);
 
 export default router;

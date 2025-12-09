@@ -10,7 +10,6 @@ const FilingSchema = new mongoose.Schema({
   total_expenses: { type: Number, default: 0 },
   tax_due: { type: Number, default: 0 },
 
-  // UPDATE: Added 'PROCESSING' to the enum list
   status: {
     type: String,
     enum: ["DRAFT", "PROCESSING", "REVIEWED", "GENERATED", "SUBMITTED"],

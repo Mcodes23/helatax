@@ -10,7 +10,6 @@ export const FilingProvider = ({ children }) => {
     filingId: null,
   });
 
-  // FIX: Wrap in useCallback to prevent infinite loops in useEffects
   const updateFiling = useCallback((newData) => {
     setFilingData((prev) => ({ ...prev, ...newData }));
   }, []);

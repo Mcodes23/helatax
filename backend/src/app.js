@@ -29,7 +29,7 @@ app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/tax-rules", taxRoutes);
 app.use("/api/v1/filing", filingRoutes);
 app.use("/api/v1/ai", aiRoutes);
-app.use("/api/v1/notifications", notificationRoutes); // <--- 2. Add Route
+app.use("/api/v1/notifications", notificationRoutes);
 
 // 404 Handler
 app.use((req, res) => {

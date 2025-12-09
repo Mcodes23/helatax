@@ -30,7 +30,6 @@ export const generateKraCsv = async (filingId, transactions, taxMode) => {
     header: header,
   });
 
-  // Prepare records with Tax Calculation included
   const records = transactions.map((t) => {
     const rate = taxMode === "TRADER" ? 0.03 : 0.3; // 3% vs 30%
     const tax = t.type === "INCOME" ? (t.amount * rate).toFixed(2) : 0;

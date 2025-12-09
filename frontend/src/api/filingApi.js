@@ -1,7 +1,6 @@
 import apiClient from "./axiosConfig";
 
 export const filingApi = {
-  // Upload Excel File
   uploadFile: async (file, month, year) => {
     const formData = new FormData();
     formData.append("file", file);
@@ -10,7 +9,7 @@ export const filingApi = {
 
     const response = await apiClient.post("/filing/upload", formData, {
       headers: {
-        "Content-Type": "multipart/form-data", // Crucial for files
+        "Content-Type": "multipart/form-data",
       },
     });
     return response.data;

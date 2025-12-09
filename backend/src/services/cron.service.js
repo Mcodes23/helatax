@@ -1,15 +1,14 @@
 import cron from "node-cron";
 import User from "../models/User.js";
-import { sendEmail } from "../utils/emailService.js"; // Imports the file we just made
+import { sendEmail } from "../utils/emailService.js";
 import logger from "../utils/logger.js";
 
 const checkDeadlines = async () => {
   const today = new Date();
-  const day = today.getDate(); // Returns 1-31
+  const day = today.getDate();
 
-  logger.info(`⏰ Cron Job Running. Today is Day ${day}`);
+  logger.info(`Cron Job Running. Today is Day ${day}`);
 
-  // 1. THE 9TH: PAYE / SHIF / HOUSING LEVY
   if (day === 9) {
     const pros = await User.find({ tax_mode: "PROFESSIONAL" });
     logger.info(`Sending PAYE Reminders to ${pros.length} users...`);
@@ -23,7 +22,6 @@ const checkDeadlines = async () => {
     });
   }
 
-  // 2. THE 20TH: TURNOVER TAX / VAT
   if (day === 20) {
     const traders = await User.find({
       $or: [{ tax_mode: "TRADER" }, { "obligations.is_vat_registered": true }],
@@ -42,7 +40,6 @@ const checkDeadlines = async () => {
 };
 
 export const startCronJobs = () => {
-  // Schedule to run every day at 08:00 AM
   cron.schedule("0 8 * * *", () => {
     checkDeadlines();
   });

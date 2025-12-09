@@ -2,14 +2,11 @@ import xlsx from "xlsx";
 import fs from "fs";
 import logger from "../../utils/logger.js";
 
-// Helper: parse a messy date like "12/11/23" or Excel Serial Date
 const parseDate = (excelDate) => {
   if (!excelDate) return new Date();
-  // If number (Excel serial date)
   if (typeof excelDate === "number") {
     return new Date(Math.round((excelDate - 25569) * 86400 * 1000));
   }
-  // If string
   return new Date(excelDate);
 };
 
@@ -17,7 +14,7 @@ export const parseUserExcel = async (filePath) => {
   try {
     // 1. Read the file from disk
     const workbook = xlsx.readFile(filePath);
-    const sheetName = workbook.SheetNames[0]; // Assume data is in first sheet
+    const sheetName = workbook.SheetNames[0];
     const sheet = workbook.Sheets[sheetName];
 
     // 2. Convert to JSON

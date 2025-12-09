@@ -84,7 +84,7 @@ export const loginUser = async (email, password) => {
       name: user.name,
       email: user.email,
       tax_mode: user.tax_mode,
-      has_confirmed_details: user.has_confirmed_details, // <--- SEND FLAG TO FRONTEND
+      has_confirmed_details: user.has_confirmed_details,
       token: generateToken(user._id),
     };
   } else {

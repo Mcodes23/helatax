@@ -6,12 +6,9 @@ const UserSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
 
-  // The KRA PIN is sensitive PII
   kra_pin: { type: String, required: true, unique: true },
 
-  // THE TRIAGE LOGIC (Gatekeeper)
-  // We force them to be either a TRADER (3%) or PROFESSIONAL (30%)
-  profession: { type: String, required: true }, // e.g., "Doctor", "Shopkeeper"
+  profession: { type: String, required: true },
   tax_mode: {
     type: String,
     enum: ["TRADER", "PROFESSIONAL"],
@@ -19,10 +16,9 @@ const UserSchema = new mongoose.Schema({
   },
 
   has_confirmed_details: { type: Boolean, default: false },
-  // Obligation Flags (For the Dashboard UI)
   obligations: {
     is_vat_registered: { type: Boolean, default: false },
-    has_mortgage: { type: Boolean, default: false }, // Enables Interest Relief logic
+    has_mortgage: { type: Boolean, default: false },
   },
 
   createdAt: { type: Date, default: Date.now },

@@ -1,12 +1,12 @@
-import Notification from "../../models/Notification.js";
+import Notification from "../../models/Notifications.js";
 
 // @desc    Get user notifications
 // @route   GET /api/v1/notifications
 export const getNotifications = async (req, res) => {
   try {
     const notifications = await Notification.find({ user: req.user.id })
-      .sort({ createdAt: -1 }) // Newest first
-      .limit(10); // Limit to last 10 to keep it fast
+      .sort({ createdAt: -1 })
+      .limit(10);
 
     res.json({ success: true, data: notifications });
   } catch (error) {

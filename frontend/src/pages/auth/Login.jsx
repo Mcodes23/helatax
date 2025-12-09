@@ -1,12 +1,12 @@
 import { useState } from "react";
-import { Link, useNavigate, useLocation } from "react-router-dom"; // Added useLocation
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { Mail, Lock, ArrowRight, Loader } from "lucide-react";
-import { useAuth } from "../../context/AuthContext"; // <--- IMPORT CONTEXT
+import { useAuth } from "../../context/AuthContext";
 
 const Login = () => {
   const navigate = useNavigate();
-  const location = useLocation(); // To redirect back to where they came from
-  const { login } = useAuth(); // <--- GET LOGIN FUNCTION FROM CONTEXT
+  const location = useLocation();
+  const { login } = useAuth();
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -31,7 +31,6 @@ const Login = () => {
       }
     } catch (err) {
       console.error("Login Error:", err);
-      // Handle the specific error message from the Context/API
       setError(err.message || "Invalid email or password.");
     } finally {
       setLoading(false);
