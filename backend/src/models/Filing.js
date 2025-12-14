@@ -12,7 +12,15 @@ const FilingSchema = new mongoose.Schema({
 
   status: {
     type: String,
-    enum: ["DRAFT", "PROCESSING", "REVIEWED", "GENERATED", "SUBMITTED"],
+    enum: [
+      "DRAFT",
+      "PROCESSING",
+      "REVIEWED",
+      "GENERATED",
+      "AUTOFILLING",
+      "READY_FOR_DOWNLOAD",
+      "SUBMITTED",
+    ],
     default: "DRAFT",
   },
 

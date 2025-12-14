@@ -10,8 +10,8 @@ from openpyxl.utils.exceptions import InvalidFileException
 # Open your KRA Excel Template and find the cell 
 # where "Total Gross Turnover" should go.
 # Example: 'E24', 'D10', etc.
-TARGET_SHEET_NAME = "Section A"  # Usually 'Section A' or 'Sheet1'
-TARGET_CELL_TURNOVER = "E24"     # <--- CHANGE THIS to match your specific KRA Excel file
+TARGET_SHEET_NAME = "D_Tax_Due"  # <--- Correct Sheet Name
+TARGET_CELL_TURNOVER = "D6"  # <--- CHANGE THIS to match your specific KRA Excel file
 # ==========================================
 
 def main():

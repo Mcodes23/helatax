@@ -78,9 +78,8 @@ export const uploadFiling = async (req, res) => {
   }
 };
 
-// ---------------------------------------------------------
-// 🚀 2. NEW: Process Autofill (Step 3 - The Bridge)
-// ---------------------------------------------------------
+// 2. Autofill KRA Template (Step 2 - NEW)
+
 export const processAutofill = async (req, res) => {
   try {
     const { filingId, transactions } = req.body;
@@ -89,88 +88,100 @@ export const processAutofill = async (req, res) => {
     if (!req.file) throw new Error("No KRA Template uploaded");
     if (!filingId) throw new Error("Filing ID is missing");
 
-    logger.info(`🚀 Starting Autofill for Filing ID: ${filingId}`);
+    logger.info(`Starting Autofill for Filing ID: ${filingId}`);
 
     // 2. Paths
-    const templatePath = req.file.path; // The Excel file user just uploaded
+    const templatePath = req.file.path;
     const jsonDataPath = path.join("uploads", `data_${filingId}.json`);
     const outputExcelPath = path.join(
       "uploads",
       `filled_return_${filingId}.xlsx`
     );
 
-    // 3. Save the Transactions as JSON (So Python can read them)
-    // Note: 'transactions' comes as a string from FormData, we need to parse it if we want to check it,
-    // but saving it directly is fine if we trust the string format.
-    // Let's ensure it is a string before writing.
+    // 3. Save Data JSON
     const jsonContent =
       typeof transactions === "string"
         ? transactions
         : JSON.stringify(transactions);
     fs.writeFileSync(jsonDataPath, jsonContent);
 
-    // 4. Update Database Status
+    // 4. Update DB Status
     const filing = await Filing.findById(filingId);
     if (filing) {
       filing.status = "AUTOFILLING";
       await filing.save();
     }
 
-    // 5. Spawn Python Process 🐍
-    // We send 3 arguments: Template Path, JSON Data Path, Output Path
-    const pythonProcess = spawn("python3", [
-      // Use "python" if on Windows, "python3" on Mac/Linux
+    // 5. Spawn Python Process
+    const pythonCommand = process.platform === "win32" ? "python" : "python3";
+
+    logger.info(`Running Python command: ${pythonCommand}`);
+
+    const pythonProcess = spawn(pythonCommand, [
       "python_engine/main.py",
       templatePath,
       jsonDataPath,
       outputExcelPath,
     ]);
 
+    // --- NEW: Handle Launch Errors (e.g., Python not found) ---
+    pythonProcess.on("error", (err) => {
+      logger.error(`Failed to start Python process: ${err.message}`);
+      return res.status(500).json({
+        success: false,
+        message: `System could not start Python. Ensure '${pythonCommand}' is installed.`,
+      });
+    });
+
     // --- Handle Python Output ---
     pythonProcess.stdout.on("data", (data) => {
-      logger.info(`🐍 Python: ${data.toString()}`);
+      logger.info(`Python: ${data.toString()}`);
     });
 
     pythonProcess.stderr.on("data", (data) => {
-      logger.error(`🐍 Python Error: ${data.toString()}`);
+      logger.error(`Python Error: ${data.toString()}`);
     });
 
     pythonProcess.on("close", async (code) => {
       if (code === 0) {
-        // Success!
-        logger.info("✅ Autofill Complete!");
+        logger.info("Autofill Complete!");
 
-        // Update DB with the NEW file path
         if (filing) {
-          filing.kra_generated_path = outputExcelPath; // Point to the Excel, not CSV
+          filing.kra_generated_path = outputExcelPath;
           filing.status = "READY_FOR_DOWNLOAD";
           await filing.save();
         }
 
-        // Notify User
         await createNotification(
           req.user.id,
           `Your KRA Excel Return is ready!`,
           "SUCCESS"
         );
 
-        return res.status(200).json({
-          success: true,
-          message: "Autofill successful",
-          downloadUrl: `/api/v1/filing/download/${filingId}`,
-        });
+        // Check if we already sent a response (in case of error event)
+        if (!res.headersSent) {
+          return res.status(200).json({
+            success: true,
+            message: "Autofill successful",
+            downloadUrl: `/api/v1/filing/download/${filingId}`,
+          });
+        }
       } else {
-        // Failure
         logger.error(`Python script failed with code ${code}`);
-        return res.status(500).json({
-          success: false,
-          message: "The autofill engine encountered an error.",
-        });
+        if (!res.headersSent) {
+          return res.status(500).json({
+            success: false,
+            message:
+              "The autofill engine encountered an error. Check server logs.",
+          });
+        }
       }
     });
   } catch (error) {
     logger.error(`Autofill Error: ${error.message}`);
-    res.status(500).json({ success: false, message: error.message });
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, message: error.message });
+    }
   }
 };
 // ---------------------------------------------------------
