@@ -22,7 +22,6 @@ export const parseUserExcel = async (filePath) => {
 
     // 3. Normalize Data (Map "Cost" or "Price" to "Amount")
     const transactions = rawData.map((row) => {
-      // Look for common column names users might use
       const amount =
         row["Amount"] || row["Cost"] || row["Price"] || row["Value"] || 0;
       const description =

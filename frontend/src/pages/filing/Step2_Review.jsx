@@ -89,7 +89,7 @@ const Step2_Review = () => {
       parsedData: transactions,
       taxSummary: summary,
     });
-    navigate("/filing/payment");
+    navigate("/filing/template-upload");
   };
 
   return (

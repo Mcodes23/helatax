@@ -15,11 +15,12 @@ import ProHome from "./pages/dashboard/ProHome";
 import ProtectedRoute from "./components/layout/ProtectedRoute";
 import Step1_Upload from "./pages/filing/Step1_Upload";
 import Step2_Review from "./pages/filing/Step2_Review";
+import Step3_TemplateUpload from "./pages/filing/Step3_TemplateUpload";
 import Step3_Payment from "./pages/filing/Step3_Payment";
 import Step4_Download from "./pages/filing/Step4_Download";
 import AiAdvisor from "./pages/dashboard/AiAdvisor";
 import History from "./pages/reports/History";
-import Settings from "./pages/dashboard/Settings"; // <--- 1. IMPORT SETTINGS
+import Settings from "./pages/dashboard/Settings";
 
 const DashboardSwitcher = () => {
   const userString = localStorage.getItem("user");
@@ -79,6 +80,15 @@ function App() {
               element={
                 <ProtectedRoute>
                   <Step2_Review />
+                </ProtectedRoute>
+              }
+            />
+
+            <Route
+              path="template-upload"
+              element={
+                <ProtectedRoute>
+                  <Step3_TemplateUpload />
                 </ProtectedRoute>
               }
             />

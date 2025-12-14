@@ -1,26 +1,32 @@
-import { CheckCircle, Download, Home, FileText } from "lucide-react"; // <--- Added FileText icon
+import { CheckCircle, Download, Home, FileText } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useFiling } from "../../context/FilingContext";
 import apiClient from "../../api/axiosConfig";
 import Navbar from "../../components/layout/Navbar";
-import jsPDF from "jspdf"; // <--- Import PDF Library
-import "jspdf-autotable"; // <--- Import Table Plugin
+import jsPDF from "jspdf";
+import "jspdf-autotable";
 
 const Step4_Download = () => {
   const navigate = useNavigate();
   const { filingData } = useFiling();
 
-  // 1. Existing CSV Download Logic
-  const handleDownloadCsv = async () => {
+  // 1. NEW: Download Excel Logic
+  const handleDownloadExcel = async () => {
     try {
       const response = await apiClient.get(
         `/filing/download/${filingData.filingId}`,
-        { responseType: "blob" }
+        { responseType: "blob" } // Critical for file downloads
       );
+
+      // Create a blob URL pointing to the Excel file
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement("a");
       link.href = url;
-      link.setAttribute("download", `KRA_Return_${filingData.filingId}.csv`);
+      // Force the name to be .xlsx
+      link.setAttribute(
+        "download",
+        `HelaTax_Return_${filingData.filingId}.xlsx`
+      );
       document.body.appendChild(link);
       link.click();
       link.parentNode.removeChild(link);
@@ -30,14 +36,13 @@ const Step4_Download = () => {
     }
   };
 
-  // 2. NEW: Generate PDF Receipt
+  // 2. Generate PDF Receipt (Kept same as before)
   const handleDownloadPdf = () => {
     const doc = new jsPDF();
     const { taxSummary, filingId } = filingData;
 
-    // A. Header
     doc.setFontSize(22);
-    doc.setTextColor(15, 23, 42); // Brand Color (Slate-900)
+    doc.setTextColor(15, 23, 42);
     doc.text("HelaTax Filing Receipt", 14, 20);
 
     doc.setFontSize(10);
@@ -45,7 +50,6 @@ const Step4_Download = () => {
     doc.text(`Filing Reference: ${filingId || "N/A"}`, 14, 28);
     doc.text(`Date Generated: ${new Date().toDateString()}`, 14, 34);
 
-    // B. The Table
     if (taxSummary) {
       doc.autoTable({
         startY: 45,
@@ -57,12 +61,11 @@ const Step4_Download = () => {
           ["TOTAL TAX DUE", taxSummary.tax.toLocaleString()],
         ],
         theme: "grid",
-        headStyles: { fillColor: [16, 185, 129] }, // Green (Action Color)
+        headStyles: { fillColor: [16, 185, 129] },
         styles: { fontSize: 12, cellPadding: 6 },
       });
     }
 
-    // C. Footer
     const finalY = doc.lastAutoTable.finalY || 100;
     doc.setFontSize(10);
     doc.setTextColor(150);
@@ -87,18 +90,18 @@ const Step4_Download = () => {
 
         <h1 className="text-4xl font-bold text-brand mb-4">Filing Complete!</h1>
         <p className="text-slate-500 max-w-md mb-10">
-          Your tax return data has been processed, formatted, and is ready for
-          upload to the KRA iTax portal.
+          Your KRA Excel Return has been autofilled and is ready for upload to
+          iTax.
         </p>
 
         <div className="flex flex-col sm:flex-row gap-4">
-          {/* Primary Action: Get the KRA File */}
+          {/* Primary Action: Get the Excel File */}
           <button
-            onClick={handleDownloadCsv}
+            onClick={handleDownloadExcel}
             className="bg-brand hover:bg-brand-light text-white px-8 py-4 rounded-xl font-bold flex items-center gap-2 shadow-lg transition-all"
           >
             <Download className="w-5 h-5" />
-            Download KRA CSV
+            Download Filled Excel
           </button>
 
           {/* Secondary Action: Get Receipt */}

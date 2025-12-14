@@ -42,7 +42,7 @@ export const askAiAdvisor = async (userQuestion, userContext) => {
     `;
 
     // 4. Generate Content
-    const result = await model.generateContent(fullPrompt);
+    const result = await model.generateContent(fullPrompt);``
     const response = await result.response;
     const text = response.text();
 

@@ -1,20 +1,20 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { User, Mail, Lock, Hash, Briefcase, Loader } from "lucide-react";
-import { authApi } from "../../api/authApi"; // Ensure this path is correct
+import { authApi } from "../../api/authApi"; 
 
 const Register = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(""); // Added error state
+  const [error, setError] = useState(""); 
 
   const [formData, setFormData] = useState({
     name: "",
     email: "",
     password: "",
     kra_pin: "",
-    profession: "", // Critical for Triage
-    businessType: "TRADER", // Default, will be overridden by backend triage
+    profession: "",
+    businessType: "TRADER", 
   });
 
   const handleSubmit = async (e) => {
@@ -26,8 +26,7 @@ const Register = () => {
       // 1. Call Backend API
       await authApi.register(formData);
 
-      // CHANGE: Do NOT save token. Do NOT go to onboarding.
-      // Force them to Login first.
+     
       alert("Account created successfully! Please log in.");
       navigate("/login"); // <--- Flow Correction
     } catch (err) {
