@@ -15,24 +15,22 @@ const Step4_Download = () => {
     try {
       const response = await apiClient.get(
         `/filing/download/${filingData.filingId}`,
-        { responseType: "blob" } // Critical for file downloads
+        { responseType: "blob" }
       );
 
-      // Create a blob URL pointing to the Excel file
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement("a");
       link.href = url;
-      // Force the name to be .xlsx
       link.setAttribute(
         "download",
-        `HelaTax_Return_${filingData.filingId}.xlsx`
+        `HelaTax_Return_${filingData.filingId}.xlsm`
       );
       document.body.appendChild(link);
       link.click();
       link.parentNode.removeChild(link);
     } catch (error) {
       console.error("Download failed", error);
-      alert("Could not download file. Please try again.");
+      alert("Could not download file.");
     }
   };
 

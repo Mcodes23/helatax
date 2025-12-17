@@ -84,39 +84,66 @@ export const processAutofill = async (req, res) => {
   try {
     const { filingId, transactions } = req.body;
 
-    // 1. Validation
     if (!req.file) throw new Error("No KRA Template uploaded");
     if (!filingId) throw new Error("Filing ID is missing");
 
-    logger.info(`Starting Autofill for Filing ID: ${filingId}`);
+    // 1. Fetch Filing & User Details to get PIN
+    const filing = await Filing.findById(filingId).populate("user");
+    if (!filing) throw new Error("Filing not found");
 
-    // 2. Paths
+    logger.info(`🚀 Starting Autofill for User: ${filing.user.name}`);
+
+    // 2. Prepare Paths (⚠️ Save as .xlsm to keep Macros)
     const templatePath = req.file.path;
     const jsonDataPath = path.join("uploads", `data_${filingId}.json`);
     const outputExcelPath = path.join(
       "uploads",
-      `filled_return_${filingId}.xlsx`
+      `filled_return_${filingId}.xlsm`
     );
 
-    // 3. Save Data JSON
-    const jsonContent =
-      typeof transactions === "string"
-        ? transactions
-        : JSON.stringify(transactions);
-    fs.writeFileSync(jsonDataPath, jsonContent);
+    // 3. Calculate Dates & Prepare Data Payload
+    const monthMap = {
+      January: "01",
+      February: "02",
+      March: "03",
+      April: "04",
+      May: "05",
+      June: "06",
+      July: "07",
+      August: "08",
+      September: "09",
+      October: "10",
+      November: "11",
+      December: "12",
+    };
 
-    // 4. Update DB Status
-    const filing = await Filing.findById(filingId);
-    if (filing) {
-      filing.status = "AUTOFILLING";
-      await filing.save();
-    }
+    const mm = monthMap[filing.month];
+    const yyyy = filing.year;
+    const lastDay = new Date(yyyy, parseInt(mm), 0).getDate(); // Auto-calculate last day (28, 30, or 31)
 
-    // 5. Spawn Python Process
+    // Construct the FULL data packet
+    const payload = {
+      transactions:
+        typeof transactions === "string"
+          ? JSON.parse(transactions)
+          : transactions,
+      meta: {
+        pin: filing.user.krapin || "A000000000Z", // Fallback PIN
+        returnType: "Original",
+        periodFrom: `01/${mm}/${yyyy}`,
+        periodTo: `${lastDay}/${mm}/${yyyy}`,
+      },
+    };
+
+    // Save payload to JSON
+    fs.writeFileSync(jsonDataPath, JSON.stringify(payload));
+
+    // 4. Update Status
+    filing.status = "AUTOFILLING";
+    await filing.save();
+
+    // 5. Spawn Python
     const pythonCommand = process.platform === "win32" ? "python" : "python3";
-
-    logger.info(`Running Python command: ${pythonCommand}`);
-
     const pythonProcess = spawn(pythonCommand, [
       "python_engine/main.py",
       templatePath,
@@ -124,67 +151,47 @@ export const processAutofill = async (req, res) => {
       outputExcelPath,
     ]);
 
-    // --- NEW: Handle Launch Errors (e.g., Python not found) ---
-    pythonProcess.on("error", (err) => {
-      logger.error(`Failed to start Python process: ${err.message}`);
-      return res.status(500).json({
-        success: false,
-        message: `System could not start Python. Ensure '${pythonCommand}' is installed.`,
-      });
-    });
-
-    // --- Handle Python Output ---
-    pythonProcess.stdout.on("data", (data) => {
-      logger.info(`Python: ${data.toString()}`);
-    });
-
-    pythonProcess.stderr.on("data", (data) => {
-      logger.error(`Python Error: ${data.toString()}`);
-    });
+    // Handle Output
+    pythonProcess.stdout.on("data", (data) =>
+      logger.info(`${data.toString().trim()}`)
+    );
+    pythonProcess.stderr.on("data", (data) =>
+      logger.error(`Error: ${data.toString().trim()}`)
+    );
 
     pythonProcess.on("close", async (code) => {
       if (code === 0) {
         logger.info("Autofill Complete!");
 
-        if (filing) {
-          filing.kra_generated_path = outputExcelPath;
-          filing.status = "READY_FOR_DOWNLOAD";
-          await filing.save();
-        }
+        filing.kra_generated_path = outputExcelPath;
+        filing.status = "READY_FOR_DOWNLOAD";
+        await filing.save();
 
         await createNotification(
-          req.user.id,
-          `Your KRA Excel Return is ready!`,
+          filing.user._id,
+          "Your KRA Return is ready!",
           "SUCCESS"
         );
 
-        // Check if we already sent a response (in case of error event)
         if (!res.headersSent) {
           return res.status(200).json({
             success: true,
-            message: "Autofill successful",
             downloadUrl: `/api/v1/filing/download/${filingId}`,
           });
         }
       } else {
-        logger.error(`Python script failed with code ${code}`);
-        if (!res.headersSent) {
-          return res.status(500).json({
-            success: false,
-            message:
-              "The autofill engine encountered an error. Check server logs.",
-          });
-        }
+        if (!res.headersSent)
+          return res
+            .status(500)
+            .json({ success: false, message: "Autofill engine failed." });
       }
     });
   } catch (error) {
     logger.error(`Autofill Error: ${error.message}`);
-    if (!res.headersSent) {
+    if (!res.headersSent)
       res.status(500).json({ success: false, message: error.message });
-    }
   }
 };
-// ---------------------------------------------------------
 
 // 3. Download File (Updated to handle new Excel path)
 export const downloadFiling = async (req, res) => {

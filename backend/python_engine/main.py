@@ -3,82 +3,94 @@ import json
 import pandas as pd
 import openpyxl
 from openpyxl.utils.exceptions import InvalidFileException
-
-# ==========================================
-# 🔧 CONFIGURATION (ADJUST THIS FOR YOUR FORM)
-# ==========================================
-# Open your KRA Excel Template and find the cell 
-# where "Total Gross Turnover" should go.
-# Example: 'E24', 'D10', etc.
-TARGET_SHEET_NAME = "D_Tax_Due"  # <--- Correct Sheet Name
-TARGET_CELL_TURNOVER = "D6"  # <--- CHANGE THIS to match your specific KRA Excel file
-# ==========================================
+from datetime import datetime
 
 def main():
     try:
-        # 1. Get Arguments from Node.js
-        # argv[0] is script name, argv[1] is template path, argv[2] is data path, argv[3] is output path
+        # 1. Validation
         if len(sys.argv) < 4:
-            print("Error: Missing arguments. Usage: main.py <template> <json_data> <output>")
+            print("[ERROR] Missing arguments.")
             sys.exit(1)
 
         template_path = sys.argv[1]
         json_data_path = sys.argv[2]
         output_path = sys.argv[3]
 
-        print(f"Loading Template: {template_path}")
+        print(f"[INFO] Loading Template: {template_path}")
 
-        # 2. Load the KRA Excel Template
-        # keep_vba=True is CRITICAL to preserve Macros (.xlsm)
+        # 2. Load Workbook (Keep VBA Macros)
         try:
             wb = openpyxl.load_workbook(template_path, keep_vba=True)
         except InvalidFileException:
-            print("Error: The file uploaded is not a valid Excel file.")
+            print("[ERROR] Invalid Excel file.")
             sys.exit(1)
 
-        # 3. Load the User's Data (JSON)
+        # 3. Load Data Packet
         with open(json_data_path, 'r') as f:
-            raw_data = json.load(f)
+            data_packet = json.load(f)
         
-        # Convert to Pandas DataFrame for easy math
-        df = pd.DataFrame(raw_data)
+        # Extract the two parts we sent from Node.js
+        transactions = data_packet.get("transactions", [])
+        meta = data_packet.get("meta", {})
 
-        # 4. Calculate Total Sales (Turnover)
-        # We filter for 'INCOME' and sum the 'amount'
+        # 4. Calculate Turnover
+        df = pd.DataFrame(transactions)
+        total_turnover = 0
         if not df.empty and 'type' in df.columns and 'amount' in df.columns:
-            # Ensure amount is numeric
             df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
+            total_turnover = df[df['type'] == 'INCOME']['amount'].sum()
+        
+        print(f"[CALC] Total Turnover: {total_turnover}")
+
+        # =======================================================
+        # 🟢 FINAL CONFIGURATION: ALL FIELDS MAPPED TO COLUMN C
+        # =======================================================
+
+        # --- SHEET 1: A_Basic_Info ---
+        if "A_Basic_Info" in wb.sheetnames:
+            ws = wb["A_Basic_Info"]
             
-            # Filter: Only INCOME
-            income_df = df[df['type'] == 'INCOME']
-            
-            # Calculate Total
-            total_turnover = income_df['amount'].sum()
+            # PIN -> Cell C2
+            ws["C2"] = meta.get("pin", "A000000000Z")
+            print(f"[WRITE] PIN -> C2")
+
+            # Return Type -> Cell C3
+            ws["C3"] = meta.get("returnType", "Original")
+            print("[WRITE] Type -> C3")
+
+            # Dates -> Cell C4 & C5
+            # We try to convert them to real Excel dates, else strings
+            try:
+                d_from = datetime.strptime(meta.get("periodFrom"), "%d/%m/%Y")
+                d_to = datetime.strptime(meta.get("periodTo"), "%d/%m/%Y")
+                ws["C4"] = d_from
+                ws["C5"] = d_to
+                print(f"[WRITE] Dates {d_from} - {d_to} -> C4, C5")
+            except:
+                ws["C4"] = meta.get("periodFrom")
+                ws["C5"] = meta.get("periodTo")
+                print("[WRITE] Dates (String) -> C4, C5")
+
         else:
-            total_turnover = 0
+            print("[ERROR] Sheet 'A_Basic_Info' missing!")
 
-        print(f"Calculated Total Turnover: {total_turnover}")
-
-        # 5. Inject into Excel
-        if TARGET_SHEET_NAME in wb.sheetnames:
-            ws = wb[TARGET_SHEET_NAME]
+        # --- SHEET 2: D_Tax_Due ---
+        if "D_Tax_Due" in wb.sheetnames:
+            ws = wb["D_Tax_Due"]
             
-            # Write the value!
-            ws[TARGET_CELL_TURNOVER] = total_turnover
-            print(f"Injected {total_turnover} into Sheet '{TARGET_SHEET_NAME}' Cell '{TARGET_CELL_TURNOVER}'")
+            # Turnover -> Cell C6
+            ws["C6"] = total_turnover
+            print(f"[WRITE] Turnover {total_turnover} -> C6")
             
         else:
-            # Fallback: specific sheet not found, try the active one
-            print(f"Sheet '{TARGET_SHEET_NAME}' not found. Writing to active sheet.")
-            ws = wb.active
-            ws[TARGET_CELL_TURNOVER] = total_turnover
+            print("[ERROR] Sheet 'D_Tax_Due' missing!")
 
-        # 6. Save the Result
+        # 6. Save (Must be .xlsm)
         wb.save(output_path)
-        print(f"Saved filled return to: {output_path}")
+        print(f"[SUCCESS] Saved to: {output_path}")
 
     except Exception as e:
-        print(f"Python Error: {str(e)}")
+        print(f"[CRITICAL ERROR] {str(e)}")
         sys.exit(1)
 
 if __name__ == "__main__":
