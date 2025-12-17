@@ -1,14 +1,14 @@
-import fs from "fs"; // <--- NEW: To save JSON files
-import path from "path"; // <--- NEW: To handle file paths
-import { spawn } from "child_process"; // <--- NEW: To talk to Python
+import fs from "fs";
+import path from "path";
+import { spawn } from "child_process";
 import Filing from "../../models/Filing.js";
 import { parseUserExcel } from "./fileParser.service.js";
-import { generateKraCsv } from "./kraGenerator.service.js"; // Keeping this for backup/legacy
+import { generateKraCsv } from "./kraGenerator.service.js";
 import { archiveFiling } from "../compliance/archive.service.js";
 import { createNotification } from "../notifications/notification.controller.js";
 import logger from "../../utils/logger.js";
 
-// 1. Upload Filing (Step 1 - Existing)
+// 1. Upload Filing (Step 1 - Processing)
 export const uploadFiling = async (req, res) => {
   try {
     if (!req.file) throw new Error("No file uploaded");
@@ -41,9 +41,9 @@ export const uploadFiling = async (req, res) => {
 
     let estimatedTax = 0;
     if (userTaxMode === "TRADER") {
-      estimatedTax = totalIncome * 0.03;
+      estimatedTax = totalIncome * 0.03; // 3% Turnover Tax
     } else {
-      estimatedTax = Math.max(0, (totalIncome - totalExpense) * 0.3);
+      estimatedTax = Math.max(0, (totalIncome - totalExpense) * 0.3); // 30% Income Tax
     }
 
     // Generate Legacy CSV (Optional - keeping for safety)
@@ -78,22 +78,37 @@ export const uploadFiling = async (req, res) => {
   }
 };
 
-// 2. Autofill KRA Template (Step 2 - NEW)
-
+// 2. Autofill KRA Template (Step 2 - The Python Engine)
 export const processAutofill = async (req, res) => {
   try {
     const { filingId, transactions } = req.body;
 
+    // 1. Validate Inputs
     if (!req.file) throw new Error("No KRA Template uploaded");
     if (!filingId) throw new Error("Filing ID is missing");
 
-    // 1. Fetch Filing & User Details to get PIN
+    // 2. Fetch Filing & POPULATE User Data
     const filing = await Filing.findById(filingId).populate("user");
-    if (!filing) throw new Error("Filing not found");
 
-    logger.info(`🚀 Starting Autofill for User: ${filing.user.name}`);
+    if (!filing) throw new Error("Filing record not found");
 
-    // 2. Prepare Paths (⚠️ Save as .xlsm to keep Macros)
+    // 🟢 FIX: Use 'kra_pin' (with underscore) to match your MongoDB Schema
+    const userPin = filing.user.kra_pin;
+
+    // Validation Log
+    logger.info(`Checking PIN for User ${filing.user.name}: ${userPin}`);
+
+    if (!userPin || userPin.length < 10) {
+      throw new Error(
+        `Your Profile is missing a valid KRA PIN. Found: '${userPin}'. Please go to Settings and update it first.`
+      );
+    }
+
+    logger.info(
+      `🚀 Starting Autofill for User: ${filing.user.name} (${userPin})`
+    );
+
+    // 3. Prepare Paths (Save as .xlsm to preserve macros)
     const templatePath = req.file.path;
     const jsonDataPath = path.join("uploads", `data_${filingId}.json`);
     const outputExcelPath = path.join(
@@ -101,7 +116,7 @@ export const processAutofill = async (req, res) => {
       `filled_return_${filingId}.xlsm`
     );
 
-    // 3. Calculate Dates & Prepare Data Payload
+    // 4. Calculate Dynamic Dates
     const monthMap = {
       January: "01",
       February: "02",
@@ -119,30 +134,30 @@ export const processAutofill = async (req, res) => {
 
     const mm = monthMap[filing.month];
     const yyyy = filing.year;
-    const lastDay = new Date(yyyy, parseInt(mm), 0).getDate(); // Auto-calculate last day (28, 30, or 31)
+    // Calculate the last day of the specific month
+    const lastDay = new Date(yyyy, parseInt(mm), 0).getDate();
 
-    // Construct the FULL data packet
+    // 5. Build the Payload (REAL DATA ONLY)
     const payload = {
       transactions:
         typeof transactions === "string"
           ? JSON.parse(transactions)
           : transactions,
       meta: {
-        pin: filing.user.krapin || "A000000000Z", // Fallback PIN
+        pin: userPin, // <--- Now uses the Correct variable
         returnType: "Original",
         periodFrom: `01/${mm}/${yyyy}`,
         periodTo: `${lastDay}/${mm}/${yyyy}`,
       },
     };
 
-    // Save payload to JSON
     fs.writeFileSync(jsonDataPath, JSON.stringify(payload));
 
-    // 4. Update Status
+    // 6. Update Status
     filing.status = "AUTOFILLING";
     await filing.save();
 
-    // 5. Spawn Python
+    // 7. Run Python
     const pythonCommand = process.platform === "win32" ? "python" : "python3";
     const pythonProcess = spawn(pythonCommand, [
       "python_engine/main.py",
@@ -151,18 +166,17 @@ export const processAutofill = async (req, res) => {
       outputExcelPath,
     ]);
 
-    // Handle Output
+    // Handle Python Logs
     pythonProcess.stdout.on("data", (data) =>
-      logger.info(`${data.toString().trim()}`)
+      logger.info(`🐍 ${data.toString().trim()}`)
     );
     pythonProcess.stderr.on("data", (data) =>
-      logger.error(`Error: ${data.toString().trim()}`)
+      logger.error(`🐍 Error: ${data.toString().trim()}`)
     );
 
+    // Handle Completion
     pythonProcess.on("close", async (code) => {
       if (code === 0) {
-        logger.info("Autofill Complete!");
-
         filing.kra_generated_path = outputExcelPath;
         filing.status = "READY_FOR_DOWNLOAD";
         await filing.save();
@@ -193,7 +207,7 @@ export const processAutofill = async (req, res) => {
   }
 };
 
-// 3. Download File (Updated to handle new Excel path)
+// 3. Download File
 export const downloadFiling = async (req, res) => {
   try {
     const filing = await Filing.findById(req.params.id);
@@ -216,6 +230,7 @@ export const downloadFiling = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
 // 4. Get History
 export const getHistory = async (req, res) => {
   try {

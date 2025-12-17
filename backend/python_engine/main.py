@@ -1,93 +1,116 @@
 import sys
 import json
-import pandas as pd
 import openpyxl
-from openpyxl.utils.exceptions import InvalidFileException
 from datetime import datetime
+import re
+
+# ==========================================
+# ⚙️ AGGRESSIVE CONFIGURATION
+# ==========================================
+SHEET_BASIC_INFO = "A_Basic_Info"
+SHEET_TAX_DUE = "D_Tax_Due"
+TARGET_COLUMN_INDEX = 3 # Column C
+
+def clean_text(text):
+    """Removes special chars like *, spaces, newlines for easier matching."""
+    if not text: return ""
+    # Remove * and extra spaces
+    return re.sub(r'[^a-zA-Z0-9]', '', str(text)).lower()
+
+def find_row_aggressive(ws, search_keyword):
+    """
+    Scans the first 20 rows and 5 columns.
+    Matches loosely (e.g. "Personal" will match "Personal Identification Number *").
+    """
+    search_clean = clean_text(search_keyword)
+    print(f"   [SEARCHING] Looking for '{search_keyword}' (Cleaned: '{search_clean}')")
+
+    for row in ws.iter_rows(min_row=1, max_row=20, max_col=5):
+        for cell in row:
+            cell_text = clean_text(cell.value)
+            if search_clean in cell_text:
+                print(f"   [FOUND] '{search_keyword}' found at {cell.coordinate} (Row {cell.row})")
+                return cell.row
+    
+    print(f"   [FAILED] Could not find '{search_keyword}' in first 20 rows.")
+    return None
+
+def write_cell(ws, row, value, label):
+    """Writes to Column C (3) at the given row."""
+    try:
+        cell = ws.cell(row=row, column=TARGET_COLUMN_INDEX)
+        # Safety check
+        if cell.data_type == 'f' or str(cell.value).startswith('='):
+            print(f"[SKIP] {label}: C{row} is a formula.")
+            return
+        
+        cell.value = value
+        print(f"[WRITE] {label}: Wrote '{value}' to C{row}")
+    except Exception as e:
+        print(f"[ERROR] {label}: {e}")
+
+def parse_date(date_str):
+    try:
+        return datetime.strptime(date_str, "%d/%m/%Y")
+    except:
+        return date_str
 
 def main():
+    if len(sys.argv) < 4:
+        print("[ERROR] Arguments missing")
+        sys.exit(1)
+
+    template_path = sys.argv[1]
+    json_path = sys.argv[2]
+    output_path = sys.argv[3]
+
     try:
-        # 1. Validation
-        if len(sys.argv) < 4:
-            print("[ERROR] Missing arguments.")
-            sys.exit(1)
-
-        template_path = sys.argv[1]
-        json_data_path = sys.argv[2]
-        output_path = sys.argv[3]
-
         print(f"[INFO] Loading Template: {template_path}")
+        wb = openpyxl.load_workbook(template_path, keep_vba=True)
 
-        # 2. Load Workbook (Keep VBA Macros)
-        try:
-            wb = openpyxl.load_workbook(template_path, keep_vba=True)
-        except InvalidFileException:
-            print("[ERROR] Invalid Excel file.")
-            sys.exit(1)
-
-        # 3. Load Data Packet
-        with open(json_data_path, 'r') as f:
-            data_packet = json.load(f)
+        with open(json_path, "r") as f:
+            data = json.load(f)
         
-        # Extract the two parts we sent from Node.js
-        transactions = data_packet.get("transactions", [])
-        meta = data_packet.get("meta", {})
+        meta = data.get("meta", {})
+        transactions = data.get("transactions", [])
 
-        # 4. Calculate Turnover
-        df = pd.DataFrame(transactions)
-        total_turnover = 0
-        if not df.empty and 'type' in df.columns and 'amount' in df.columns:
-            df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0)
-            total_turnover = df[df['type'] == 'INCOME']['amount'].sum()
-        
-        print(f"[CALC] Total Turnover: {total_turnover}")
+        # Turnover Calc
+        total_turnover = sum(
+            float(t.get("amount", 0)) for t in transactions if t.get("type") == "INCOME"
+        )
 
-        # =======================================================
-        # 🟢 FINAL CONFIGURATION: ALL FIELDS MAPPED TO COLUMN C
-        # =======================================================
+        # ----------------------------------------------------
+        # 1. SHEET A_Basic_Info
+        # ----------------------------------------------------
+        if SHEET_BASIC_INFO in wb.sheetnames:
+            ws = wb[SHEET_BASIC_INFO]
+            print(f"--- Processing {SHEET_BASIC_INFO} ---")
 
-        # --- SHEET 1: A_Basic_Info ---
-        if "A_Basic_Info" in wb.sheetnames:
-            ws = wb["A_Basic_Info"]
-            
-            # PIN -> Cell C2
-            ws["C2"] = meta.get("pin", "A000000000Z")
-            print(f"[WRITE] PIN -> C2")
+            # Search keywords simplified to single words to avoid mismatch
+            row_pin = find_row_aggressive(ws, "Personal")  # Matches "Personal Identification..."
+            if row_pin: write_cell(ws, row_pin, meta.get("pin"), "PIN")
 
-            # Return Type -> Cell C3
-            ws["C3"] = meta.get("returnType", "Original")
-            print("[WRITE] Type -> C3")
+            row_type = find_row_aggressive(ws, "Type")     # Matches "Type of Return"
+            if row_type: write_cell(ws, row_type, "Original", "Return Type")
 
-            # Dates -> Cell C4 & C5
-            # We try to convert them to real Excel dates, else strings
-            try:
-                d_from = datetime.strptime(meta.get("periodFrom"), "%d/%m/%Y")
-                d_to = datetime.strptime(meta.get("periodTo"), "%d/%m/%Y")
-                ws["C4"] = d_from
-                ws["C5"] = d_to
-                print(f"[WRITE] Dates {d_from} - {d_to} -> C4, C5")
-            except:
-                ws["C4"] = meta.get("periodFrom")
-                ws["C5"] = meta.get("periodTo")
-                print("[WRITE] Dates (String) -> C4, C5")
+            row_from = find_row_aggressive(ws, "From")     # Matches "Return Period From"
+            if row_from: write_cell(ws, row_from, parse_date(meta.get("periodFrom")), "Date From")
 
-        else:
-            print("[ERROR] Sheet 'A_Basic_Info' missing!")
+            row_to = find_row_aggressive(ws, "To")         # Matches "Return Period To"
+            if row_to: write_cell(ws, row_to, parse_date(meta.get("periodTo")), "Date To")
 
-        # --- SHEET 2: D_Tax_Due ---
-        if "D_Tax_Due" in wb.sheetnames:
-            ws = wb["D_Tax_Due"]
-            
-            # Turnover -> Cell C6
-            ws["C6"] = total_turnover
-            print(f"[WRITE] Turnover {total_turnover} -> C6")
-            
-        else:
-            print("[ERROR] Sheet 'D_Tax_Due' missing!")
+        # ----------------------------------------------------
+        # 2. SHEET D_Tax_Due
+        # ----------------------------------------------------
+        if SHEET_TAX_DUE in wb.sheetnames:
+            ws = wb[SHEET_TAX_DUE]
+            print(f"--- Processing {SHEET_TAX_DUE} ---")
 
-        # 6. Save (Must be .xlsm)
+            row_turnover = find_row_aggressive(ws, "Turnover") # Matches "Turnover for the Period"
+            if row_turnover: write_cell(ws, row_turnover, total_turnover, "Turnover")
+
         wb.save(output_path)
-        print(f"[SUCCESS] Saved to: {output_path}")
+        print(f"[SUCCESS] Saved to {output_path}")
 
     except Exception as e:
         print(f"[CRITICAL ERROR] {str(e)}")
