@@ -1,86 +1,117 @@
 import sys
 import json
-import os
-import xlwings as xw
+import openpyxl
 from datetime import datetime
 
-def parse_date(date_str):
-    if not date_str: return None
-    try:
-        dt = datetime.strptime(str(date_str), "%d/%m/%Y")
-        return dt.date()
-    except:
-        return date_str
+# ==========================================
+# ⚙️ CONFIGURATION (KRA MASTER INPUT CELLS)
+# ==========================================
+MAPPING = {
+    "A_Basic_Info": {
+        "PIN": "C2",
+        "RETURN_TYPE": "C3",
+        "PERIOD_FROM": "C4",
+        "PERIOD_TO": "C5",
+    },
+    "D_Tax_Due": {
+        "TURNOVER": "C6"
+    }
+}
 
+# ==========================================
+# 🛡️ HELPERS
+# ==========================================
+def parse_date(value):
+    """Accepts YYYY-MM-DD or DD/MM/YYYY → returns datetime"""
+    if not value:
+        return None
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(str(value), fmt)
+        except ValueError:
+            continue
+    return value  # fallback (Excel will handle)
+
+def resolve_master_cell(ws, coord):
+    """Return top-left cell of merged range if applicable"""
+    for rng in ws.merged_cells.ranges:
+        if coord in rng:
+            return rng.start_cell.coordinate
+    return coord
+
+def safe_write(ws, coord, value, label):
+    """Force-write to KRA input cells only"""
+    try:
+        final_coord = resolve_master_cell(ws, coord)
+        ws[final_coord].value = value
+        print(f"[WRITE] {label}: {value} → {ws.title}!{final_coord}")
+    except Exception as e:
+        print(f"[ERROR] {label} failed at {coord}: {str(e)}")
+
+# ==========================================
+# 🚀 MAIN
+# ==========================================
 def main():
     if len(sys.argv) < 4:
-        print("[ERROR] Arguments missing")
+        print("Usage: main.py <template.xlsm> <data.json> <output.xlsm>")
         sys.exit(1)
 
-    template_path = os.path.abspath(sys.argv[1])
-    json_path = os.path.abspath(sys.argv[2])
-    output_path = os.path.abspath(sys.argv[3])
+    template_path = sys.argv[1]
+    json_path = sys.argv[2]
+    output_path = sys.argv[3]
 
-    # [FIX] Removed Emoji to prevent UnicodeEncodeError on Windows
-    print("--- Starting xlwings Engine ---")
-    
     try:
-        # 1. Load Data
+        print(f"[LOAD] {template_path}")
+        wb = openpyxl.load_workbook(template_path, keep_vba=True)
+
         with open(json_path, "r") as f:
-            data = json.load(f)
-        
-        meta = data.get("meta", {})
-        transactions = data.get("transactions", [])
+            payload = json.load(f)
 
-        # 2. Calculate Turnover
-        income_tx = [t for t in transactions if t.get("type") == "INCOME"]
-        total_turnover = sum(float(t.get("amount", 0)) for t in income_tx)
-        print(f"[CALC] Turnover: {total_turnover}")
+        meta = payload.get("meta", {})
+        transactions = payload.get("transactions", [])
 
-        # 3. Launch Excel
-        # visible=False runs it in background. 
-        # If it hangs, change to visible=True to see if there is a popup blocking it.
-        app = xw.App(visible=False) 
-        
-        try:
-            print(f"[EXCEL] Opening template...")
-            wb = app.books.open(template_path)
+        # ----------------------------------
+        # Calculate Gross Turnover (INCOME)
+        # ----------------------------------
+        total_turnover = sum(
+            float(t.get("amount", 0))
+            for t in transactions
+            if t.get("type") == "INCOME"
+        )
 
-            # ---------------------------------------------
-            # SHEET A: Basic Info
-            # ---------------------------------------------
-            sheet_names = [s.name for s in wb.sheets]
-            
-            if "A_Basic_Info" in sheet_names:
-                ws = wb.sheets["A_Basic_Info"]
-                # Writing to D column (Excel handles the merge automatically)
-                ws.range("D2").value = meta.get("pin")
-                ws.range("D3").value = "Original"
-                ws.range("D4").value = parse_date(meta.get("periodFrom")) 
-                ws.range("D5").value = parse_date(meta.get("periodTo"))
-                print("[WRITE] Basic Info Filled")
+        print(f"[CALC] Gross Turnover: {total_turnover}")
 
-            # ---------------------------------------------
-            # SHEET D: Tax Due
-            # ---------------------------------------------
-            if "D_Tax_Due" in sheet_names:
-                ws = wb.sheets["D_Tax_Due"]
-                ws.range("D6").value = total_turnover
-                print("[WRITE] Turnover Filled")
+        # ----------------------------------
+        # A_Basic_Info
+        # ----------------------------------
+        if "A_Basic_Info" not in wb.sheetnames:
+            raise Exception("Sheet A_Basic_Info missing")
 
-            # 4. Save and Close
-            wb.save(output_path)
-            print(f"[SUCCESS] Saved to: {output_path}")
-            wb.close()
+        ws_info = wb["A_Basic_Info"]
+        m = MAPPING["A_Basic_Info"]
 
-        except Exception as e:
-            print(f"[ERROR] Excel Operation Failed: {e}")
-        finally:
-            # Ensure Excel closes so it doesn't get stuck in Task Manager
-            app.quit() 
+        safe_write(ws_info, m["PIN"], meta.get("pin"), "KRA PIN")
+        safe_write(ws_info, m["RETURN_TYPE"], "Original", "Return Type")
+        safe_write(ws_info, m["PERIOD_FROM"], parse_date(meta.get("periodFrom")), "Period From")
+        safe_write(ws_info, m["PERIOD_TO"], parse_date(meta.get("periodTo")), "Period To")
+
+        # ----------------------------------
+        # D_Tax_Due (INPUT ONLY)
+        # ----------------------------------
+        if "D_Tax_Due" not in wb.sheetnames:
+            raise Exception("Sheet D_Tax_Due missing")
+
+        ws_tax = wb["D_Tax_Due"]
+        safe_write(ws_tax, MAPPING["D_Tax_Due"]["TURNOVER"], total_turnover, "Turnover")
+
+        # ----------------------------------
+        # SAVE
+        # ----------------------------------
+        wb.save(output_path)
+        print(f"[SUCCESS] Saved valid KRA return → {output_path}")
 
     except Exception as e:
-        print(f"[CRITICAL] Script Failed: {e}")
+        print(f"[CRITICAL] {str(e)}")
         sys.exit(1)
 
 if __name__ == "__main__":

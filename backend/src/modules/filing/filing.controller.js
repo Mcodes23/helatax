@@ -110,8 +110,9 @@ export const processAutofill = async (req, res) => {
 
     // 3. Prepare Paths (Save as .xlsm to preserve macros)
     const templatePath = req.file.path;
-    const jsonDataPath = path.join("uploads", `data_${filingId}.json`);
-    const outputExcelPath = path.join(
+    const jsonDataPath = path.resolve(process.cwd(), "uploads", `data_${filingId}.json`);
+    const outputExcelPath = path.resolve(
+      process.cwd(),
       "uploads",
       `filled_return_${filingId}.xlsm`
     );
@@ -159,12 +160,15 @@ export const processAutofill = async (req, res) => {
 
     // 7. Run Python
     const pythonCommand = process.platform === "win32" ? "python" : "python3";
+    const pythonScriptPath = path.resolve(process.cwd(), "python_engine", "main.py");
     const pythonProcess = spawn(pythonCommand, [
-      "python_engine/main.py",
+      pythonScriptPath,
       templatePath,
       jsonDataPath,
       outputExcelPath,
-    ]);
+    ], {
+      cwd: process.cwd(), // Ensure working directory is correct
+    });
 
     // Handle Python Logs
     pythonProcess.stdout.on("data", (data) =>
@@ -177,6 +181,18 @@ export const processAutofill = async (req, res) => {
     // Handle Completion
     pythonProcess.on("close", async (code) => {
       if (code === 0) {
+        // Verify the file was actually created
+        if (!fs.existsSync(outputExcelPath)) {
+          logger.error(`Python script completed but file not found: ${outputExcelPath}`);
+          if (!res.headersSent) {
+            return res.status(500).json({ 
+              success: false, 
+              message: "Autofill completed but output file was not created." 
+            });
+          }
+          return;
+        }
+
         filing.kra_generated_path = outputExcelPath;
         filing.status = "READY_FOR_DOWNLOAD";
         await filing.save();
@@ -218,16 +234,46 @@ export const downloadFiling = async (req, res) => {
       return res.status(401).json({ message: "Not authorized" });
     }
 
-    // Check if file exists
-    if (!fs.existsSync(filing.kra_generated_path)) {
-      return res
-        .status(404)
-        .json({ message: "File generated but not found on server." });
+    if (!filing.kra_generated_path) {
+      logger.error(`Filing ${filing._id} has no kra_generated_path`);
+      return res.status(404).json({ 
+        message: "File path not set. Please regenerate the filing." 
+      });
     }
 
-    res.download(filing.kra_generated_path);
+    // Resolve to absolute path (handles both relative and absolute paths)
+    const filePath = path.isAbsolute(filing.kra_generated_path)
+      ? filing.kra_generated_path
+      : path.resolve(process.cwd(), filing.kra_generated_path);
+
+    logger.info(`Download request for filing ${filing._id}, path: ${filePath}`);
+
+    // Check if file exists
+    if (!fs.existsSync(filePath)) {
+      logger.error(`File not found: ${filePath}`);
+      return res.status(404).json({ 
+        message: `File generated but not found on server. Path: ${filePath}` 
+      });
+    }
+
+    // Set proper filename for download
+    const filename = `KRA_Return_${filing.month}_${filing.year}.xlsm`;
+    
+    res.download(filePath, filename, (err) => {
+      if (err) {
+        logger.error(`Download error for filing ${filing._id}: ${err.message}`);
+        if (!res.headersSent) {
+          res.status(500).json({ 
+            message: `Download failed: ${err.message}` 
+          });
+        }
+      }
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    logger.error(`Download endpoint error: ${error.message}`, error);
+    if (!res.headersSent) {
+      res.status(500).json({ message: error.message });
+    }
   }
 };
 
