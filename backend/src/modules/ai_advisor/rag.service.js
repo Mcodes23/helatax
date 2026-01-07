@@ -10,7 +10,7 @@ export const askAiAdvisor = async (userQuestion, userContext) => {
 
     // 2. Initialize Gemini (Free Tier)
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
     // 3. Construct the "General Expert" Prompt
     // We removed the strict constraints that limited it to only SME/Freelancer logic.
@@ -42,7 +42,8 @@ export const askAiAdvisor = async (userQuestion, userContext) => {
     `;
 
     // 4. Generate Content
-    const result = await model.generateContent(fullPrompt);``
+    const result = await model.generateContent(fullPrompt);
+    ``;
     const response = await result.response;
     const text = response.text();
 

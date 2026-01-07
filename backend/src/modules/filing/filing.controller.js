@@ -110,7 +110,11 @@ export const processAutofill = async (req, res) => {
 
     // 3. Prepare Paths (Save as .xlsm to preserve macros)
     const templatePath = req.file.path;
-    const jsonDataPath = path.resolve(process.cwd(), "uploads", `data_${filingId}.json`);
+    const jsonDataPath = path.resolve(
+      process.cwd(),
+      "uploads",
+      `data_${filingId}.json`
+    );
     const outputExcelPath = path.resolve(
       process.cwd(),
       "uploads",
@@ -147,6 +151,7 @@ export const processAutofill = async (req, res) => {
       meta: {
         pin: userPin, // <--- Now uses the Correct variable
         returnType: "Original",
+        returnPeriodFrom: `01/${mm}/${yyyy}`, // Updated key to match Python script expectation if needed, or kept as periodFrom
         periodFrom: `01/${mm}/${yyyy}`,
         periodTo: `${lastDay}/${mm}/${yyyy}`,
       },
@@ -158,17 +163,48 @@ export const processAutofill = async (req, res) => {
     filing.status = "AUTOFILLING";
     await filing.save();
 
-    // 7. Run Python
-    const pythonCommand = process.platform === "win32" ? "python" : "python3";
-    const pythonScriptPath = path.resolve(process.cwd(), "python_engine", "main.py");
-    const pythonProcess = spawn(pythonCommand, [
-      pythonScriptPath,
-      templatePath,
-      jsonDataPath,
-      outputExcelPath,
-    ], {
-      cwd: process.cwd(), // Ensure working directory is correct
-    });
+    // 7. Run Python (Using Virtual Environment to fix ModuleNotFoundError)
+    // ------------------------------------------------------------------
+    let pythonCommand = "python"; // fallback
+    const pythonScriptPath = path.resolve(
+      process.cwd(),
+      "python_engine",
+      "main.py"
+    );
+
+    if (process.platform === "win32") {
+      // Windows: Check for .venv/Scripts/python.exe
+      const venvPython = path.join(
+        process.cwd(),
+        ".venv",
+        "Scripts",
+        "python.exe"
+      );
+      if (fs.existsSync(venvPython)) {
+        pythonCommand = venvPython;
+        logger.info(`🐍 Using Virtual Env Python: ${pythonCommand}`);
+      } else {
+        logger.warn(
+          `⚠️ Virtual Env not found at ${venvPython}, using global python`
+        );
+      }
+    } else {
+      // Linux/Mac: Check for .venv/bin/python
+      const venvPython = path.join(process.cwd(), ".venv", "bin", "python");
+      if (fs.existsSync(venvPython)) {
+        pythonCommand = venvPython;
+      } else {
+        pythonCommand = "python3";
+      }
+    }
+
+    const pythonProcess = spawn(
+      pythonCommand,
+      [pythonScriptPath, templatePath, jsonDataPath, outputExcelPath],
+      {
+        cwd: process.cwd(), // Ensure working directory is correct
+      }
+    );
 
     // Handle Python Logs
     pythonProcess.stdout.on("data", (data) =>
@@ -183,11 +219,13 @@ export const processAutofill = async (req, res) => {
       if (code === 0) {
         // Verify the file was actually created
         if (!fs.existsSync(outputExcelPath)) {
-          logger.error(`Python script completed but file not found: ${outputExcelPath}`);
+          logger.error(
+            `Python script completed but file not found: ${outputExcelPath}`
+          );
           if (!res.headersSent) {
-            return res.status(500).json({ 
-              success: false, 
-              message: "Autofill completed but output file was not created." 
+            return res.status(500).json({
+              success: false,
+              message: "Autofill completed but output file was not created.",
             });
           }
           return;
@@ -236,8 +274,8 @@ export const downloadFiling = async (req, res) => {
 
     if (!filing.kra_generated_path) {
       logger.error(`Filing ${filing._id} has no kra_generated_path`);
-      return res.status(404).json({ 
-        message: "File path not set. Please regenerate the filing." 
+      return res.status(404).json({
+        message: "File path not set. Please regenerate the filing.",
       });
     }
 
@@ -251,20 +289,20 @@ export const downloadFiling = async (req, res) => {
     // Check if file exists
     if (!fs.existsSync(filePath)) {
       logger.error(`File not found: ${filePath}`);
-      return res.status(404).json({ 
-        message: `File generated but not found on server. Path: ${filePath}` 
+      return res.status(404).json({
+        message: `File generated but not found on server. Path: ${filePath}`,
       });
     }
 
     // Set proper filename for download
     const filename = `KRA_Return_${filing.month}_${filing.year}.xlsm`;
-    
+
     res.download(filePath, filename, (err) => {
       if (err) {
         logger.error(`Download error for filing ${filing._id}: ${err.message}`);
         if (!res.headersSent) {
-          res.status(500).json({ 
-            message: `Download failed: ${err.message}` 
+          res.status(500).json({
+            message: `Download failed: ${err.message}`,
           });
         }
       }
