@@ -1,122 +1,89 @@
 import sys
 import json
-import openpyxl
-import io
+import shutil
+import os
+import uuid
+from openpyxl import load_workbook
 
-# ==========================================
-# CONSOLE ENCODING FIX
-# ==========================================
-# Forces UTF-8 output to prevent crashes on Windows consoles
-try:
-    if sys.stdout.encoding != 'utf-8':
-        sys.stdout.reconfigure(encoding='utf-8')
-        sys.stderr.reconfigure(encoding='utf-8')
-except Exception:
-    pass
+# 1. SETUP
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+GENERATED_DIR = os.path.join(BASE_DIR, "../generated")
+os.makedirs(GENERATED_DIR, exist_ok=True)
 
-# ==========================================
-# HELPERS
-# ==========================================
-def find_sheet_by_keyword(wb, keyword):
-    """Finds a sheet that contains the keyword (case-insensitive)"""
-    # 1. Try exact match
-    if keyword in wb.sheetnames:
-        return wb[keyword]
-        
-    # 2. Try partial match
-    for sheet_name in wb.sheetnames:
-        if keyword.lower() in sheet_name.lower():
-            return wb[sheet_name]
-    return None
+# 2. SAFE WRITE HELPER
+def safe_write(ws, coord, value):
+    val_str = str(value) if value is not None else ""
+    for range_ in ws.merged_cells.ranges:
+        if coord in range_:
+            ws[range_.start_cell.coordinate] = val_str
+            return 
+    ws[coord] = val_str
 
-def unlock_sheet(ws):
-    """Removes protection so we can write"""
+# 3. MAIN LOGIC
+def process_return(template_path, data_path):
     try:
-        ws.protection.sheet = False
-        ws.protection.enable() == False
-    except:
-        pass
+        # Load Data
+        with open(data_path, 'r') as f:
+            data = json.load(f)
 
-def resolve_master_cell(ws, coord):
-    """Handles merged cells (returns the top-left cell of a merge range)"""
-    for rng in ws.merged_cells.ranges:
-        if coord in rng:
-            return rng.start_cell.coordinate
-    return coord
-
-def strict_write(ws, coord, value):
-    """Writes value to cell safely"""
-    if value is None:
-        return
-    
-    try:
-        final_coord = resolve_master_cell(ws, coord)
-        ws[final_coord].value = value
+        # Output Filename
+        filename = f"return_{data.get('pin', 'user')}_{uuid.uuid4().hex[:6]}.xlsm"
+        output_path = os.path.join(GENERATED_DIR, filename)
         
-        # Safe print for logs
-        safe_val = str(value).encode('ascii', 'ignore').decode('ascii')
-        print(f"   [WRITE] {ws.title}!{final_coord} = '{safe_val}'")
-    except Exception as e:
-        print(f"   [WRITE ERROR] Could not write to {coord}: {e}")
+        # Copy Template
+        shutil.copy(template_path, output_path)
+        wb = load_workbook(output_path, keep_vba=True)
 
-# ==========================================
-# MAIN ENGINE
-# ==========================================
-def main():
-    if len(sys.argv) < 4:
-        print("Usage: main.py <template> <data> <output>")
-        sys.exit(1)
+        # --- SECTION A: IDENTITY (Col B) ---
+        if "A_Basic_Info" in wb.sheetnames:
+            ws_info = wb["A_Basic_Info"]
+            safe_write(ws_info, 'B3', data.get('pin', 'A000000000Z'))
+            safe_write(ws_info, 'B4', 'Original')
+            safe_write(ws_info, 'B5', data.get('fromDate', '01/01/2024'))
+            safe_write(ws_info, 'B6', data.get('toDate', '31/01/2024'))
 
-    template_path = sys.argv[1]
-    json_path = sys.argv[2]
-    output_path = sys.argv[3]
+        # --- SECTION B: PURCHASES (Col A) ---
+        if "B_Details_of_Purchases" in wb.sheetnames:
+            ws_purchases = wb["B_Details_of_Purchases"]
+            start_row = 3
+            purchases = data.get('purchases', [])
+            
+            for i, p in enumerate(purchases):
+                r = start_row + i
+                
+                # --- SMART DEFAULTS (Fix for missing data in trader_dataset) ---
+                # If 'supplierPin' is missing, use a dummy to ensure row is visible
+                pin = p.get('supplierPin') or "P000000000Z" 
+                # If 'supplierName' is missing, use 'description' or 'General Supplier'
+                name = p.get('supplierName') or p.get('description') or "General Supplier"
+                inv_date = p.get('invoiceDate') or data.get('fromDate')
+                inv_no = p.get('invoiceNo') or f"INV-{i+1:03d}"
+                desc = p.get('description') or "Goods"
+                amount = str(p.get('amount', '0'))
 
-    try:
-        print(f"STARTING UNIVERSAL AUTOFILL...")
-        print(f"   Template: {template_path}")
-        
-        # Load Workbook (keep_vba=True is essential for .xlsm)
-        wb = openpyxl.load_workbook(template_path, keep_vba=True)
+                # Write to Columns A-F (Shifted Logic)
+                safe_write(ws_purchases, f"A{r}", pin)      # PIN
+                safe_write(ws_purchases, f"B{r}", name)     # Name
+                safe_write(ws_purchases, f"C{r}", inv_date) # Date
+                safe_write(ws_purchases, f"D{r}", inv_no)   # Invoice
+                safe_write(ws_purchases, f"E{r}", desc)     # Desc
+                safe_write(ws_purchases, f"F{r}", amount)   # Amount
 
-        # 1. Read the Instructions
-        with open(json_path, "r", encoding='utf-8') as f:
-            payload = json.load(f)
-        
-        instructions = payload.get("instructions", [])
-        print(f"   Received {len(instructions)} write instructions.")
+        # --- SECTION D: TAX DUE (Col C) ---
+        if "D_Tax_Due" in wb.sheetnames:
+            ws_tax = wb["D_Tax_Due"]
+            safe_write(ws_tax, 'C4', str(data.get('turnover', '0')))
 
-        # 2. Execute Instructions
-        found_sheets = {} # Cache found sheets
-        
-        for instr in instructions:
-            sheet_key = instr.get("sheet_keyword")
-            cell = instr.get("cell")
-            val = instr.get("value")
-
-            # Find the sheet dynamically (with caching)
-            if sheet_key in found_sheets:
-                ws = found_sheets[sheet_key]
-            else:
-                ws = find_sheet_by_keyword(wb, sheet_key)
-                if ws:
-                    found_sheets[sheet_key] = ws
-                    unlock_sheet(ws)
-
-            if ws:
-                strict_write(ws, cell, val)
-            else:
-                print(f"   [SKIP] Sheet matching '{sheet_key}' not found.")
-
-        # 3. Save
-        print(f"   Saving to: {output_path}")
         wb.save(output_path)
-        print(f"   SUCCESS! File generated.")
+        
+        # PRINT ONLY FILENAME FOR NODE.JS
+        print(filename)
 
     except Exception as e:
-        print(f"CRITICAL ERROR: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+        print(f"ERROR: {str(e)}")
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 2:
+        process_return(sys.argv[1], sys.argv[2])
+    else:
+        print("ERROR: Missing arguments")
