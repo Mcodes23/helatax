@@ -1,51 +1,64 @@
 import xlsx from "xlsx";
-import fs from "fs";
 import logger from "../../utils/logger.js";
 
-const parseDate = (excelDate) => {
-  if (!excelDate) return new Date();
-  if (typeof excelDate === "number") {
-    return new Date(Math.round((excelDate - 25569) * 86400 * 1000));
-  }
-  return new Date(excelDate);
-};
-
-export const parseUserExcel = async (filePath) => {
+const parseTraderExcel = async (filePath) => {
   try {
-    // 1. Read the file from disk
     const workbook = xlsx.readFile(filePath);
     const sheetName = workbook.SheetNames[0];
-    const sheet = workbook.Sheets[sheetName];
+    const worksheet = workbook.Sheets[sheetName];
 
-    // 2. Convert to JSON
-    const rawData = xlsx.utils.sheet_to_json(sheet);
+    // Convert to JSON
+    const rawData = xlsx.utils.sheet_to_json(worksheet);
 
-    // 3. Normalize Data (Map "Cost" or "Price" to "Amount")
-    const transactions = rawData.map((row) => {
-      const amount =
-        row["Amount"] || row["Cost"] || row["Price"] || row["Value"] || 0;
-      const description =
-        row["Description"] || row["Item"] || row["Details"] || "Unknown";
-      const date = parseDate(row["Date"] || row["Day"]);
-      const type = row["Type"] ? row["Type"].toUpperCase() : "EXPENSE"; // Default to Expense if missing
+    const purchases = [];
+    let totalTurnover = 0;
 
-      return {
-        date,
-        description,
-        amount: parseFloat(amount),
-        type:
-          type.includes("SALE") || type.includes("INCOME")
-            ? "INCOME"
-            : "EXPENSE",
-      };
+    rawData.forEach((row) => {
+      // Normalize keys to lowercase
+      const cleanRow = {};
+      Object.keys(row).forEach((key) => {
+        cleanRow[key.trim().toLowerCase()] = row[key];
+      });
+
+      // Extract based on your file: Date, Description, Amount, Type
+      const type = cleanRow["type"] || "EXPENSE";
+      const amount = parseFloat(cleanRow["amount"]) || 0;
+      const desc = cleanRow["description"] || "General Goods";
+      const dateRaw = cleanRow["date"];
+
+      // Logic: INCOME adds to Turnover, EXPENSE adds to Table
+      if (type.toString().toUpperCase().includes("INCOME")) {
+        totalTurnover += amount;
+      } else {
+        purchases.push({
+          supplierPin: "P051123456Z", // Dummy PIN required by KRA
+          supplierName: desc, // Use desc as name
+          invoiceDate: parseExcelDate(dateRaw),
+          invoiceNo: `INV-${Math.floor(Math.random() * 9000) + 1000}`,
+          description: desc,
+          amount: amount,
+        });
+      }
     });
 
-    logger.info(`Parsed ${transactions.length} rows from Excel.`);
-    return transactions;
+    return {
+      turnover: totalTurnover,
+      purchases: purchases,
+      taxDue: totalTurnover * 0.03,
+    };
   } catch (error) {
     logger.error(`Parsing Error: ${error.message}`);
-    throw new Error(
-      "Failed to read Excel file. Ensure it has columns: Date, Description, Amount."
-    );
+    throw new Error("Failed to parse trader file");
   }
 };
+
+function parseExcelDate(dateVal) {
+  if (!dateVal) return "01/01/2024";
+  if (typeof dateVal === "number") {
+    const date = new Date(Math.round((dateVal - 25569) * 86400 * 1000));
+    return date.toLocaleDateString("en-GB");
+  }
+  return String(dateVal);
+}
+
+export default { parseTraderExcel };
