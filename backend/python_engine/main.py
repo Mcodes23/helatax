@@ -1,58 +1,70 @@
 import sys
 import json
-# Wrap import in try-except to debug installation issues
+import openpyxl
+import io
+
+# ==========================================
+# CONSOLE ENCODING FIX
+# ==========================================
+# Forces UTF-8 output to prevent crashes on Windows consoles
 try:
-    import openpyxl
-    from datetime import datetime
-except ImportError:
-    print("CRITICAL ERROR: 'openpyxl' library not found. Run: pip install openpyxl")
-    sys.exit(1)
+    if sys.stdout.encoding != 'utf-8':
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+except Exception:
+    pass
 
 # ==========================================
-# 🧠 HELPER FUNCTIONS
+# HELPERS
 # ==========================================
-def get_master_cell(ws, cell_address):
-    for merged_range in ws.merged_cells.ranges:
-        if cell_address in merged_range:
-            return merged_range.start_cell.coordinate
-    return cell_address
-
-def force_write(ws, cell_address, value, label):
-    try:
-        if value is None:
-            print(f"SKIP: No value for {label}")
-            return
-        master_coord = get_master_cell(ws, cell_address)
-        ws[master_coord].value = value
-        print(f"FORCE WRITE: {label} -> {master_coord} = {value}")
-    except Exception as e:
-        print(f"ERROR writing {label}: {str(e)}")
-
-def find_input_cell(ws, label_text):
-    label_clean = label_text.lower().replace("*", "").strip()
-    for row in ws.iter_rows(min_row=1, max_row=30, max_col=2):
-        for cell in row:
-            if cell.value and label_clean in str(cell.value).lower().strip():
-                target_cell = ws.cell(row=cell.row, column=3) 
-                return get_master_cell(ws, target_cell.coordinate)
+def find_sheet_by_keyword(wb, keyword):
+    """Finds a sheet that contains the keyword (case-insensitive)"""
+    # 1. Try exact match
+    if keyword in wb.sheetnames:
+        return wb[keyword]
+        
+    # 2. Try partial match
+    for sheet_name in wb.sheetnames:
+        if keyword.lower() in sheet_name.lower():
+            return wb[sheet_name]
     return None
 
-def parse_date(date_str):
-    if not date_str: return None
+def unlock_sheet(ws):
+    """Removes protection so we can write"""
     try:
-        return datetime.strptime(str(date_str), "%d/%m/%Y")
+        ws.protection.sheet = False
+        ws.protection.enable() == False
     except:
-        return date_str
+        pass
+
+def resolve_master_cell(ws, coord):
+    """Handles merged cells (returns the top-left cell of a merge range)"""
+    for rng in ws.merged_cells.ranges:
+        if coord in rng:
+            return rng.start_cell.coordinate
+    return coord
+
+def strict_write(ws, coord, value):
+    """Writes value to cell safely"""
+    if value is None:
+        return
+    
+    try:
+        final_coord = resolve_master_cell(ws, coord)
+        ws[final_coord].value = value
+        
+        # Safe print for logs
+        safe_val = str(value).encode('ascii', 'ignore').decode('ascii')
+        print(f"   [WRITE] {ws.title}!{final_coord} = '{safe_val}'")
+    except Exception as e:
+        print(f"   [WRITE ERROR] Could not write to {coord}: {e}")
 
 # ==========================================
-# 🚀 MAIN SCRIPT
+# MAIN ENGINE
 # ==========================================
 def main():
-    if sys.platform == "win32":
-        sys.stdout.reconfigure(encoding='utf-8')
-
     if len(sys.argv) < 4:
-        print("ERROR: Missing arguments")
+        print("Usage: main.py <template> <data> <output>")
         sys.exit(1)
 
     template_path = sys.argv[1]
@@ -60,53 +72,50 @@ def main():
     output_path = sys.argv[3]
 
     try:
-        print("LOADING: " + template_path)
+        print(f"STARTING UNIVERSAL AUTOFILL...")
+        print(f"   Template: {template_path}")
+        
+        # Load Workbook (keep_vba=True is essential for .xlsm)
         wb = openpyxl.load_workbook(template_path, keep_vba=True)
+
+        # 1. Read the Instructions
+        with open(json_path, "r", encoding='utf-8') as f:
+            payload = json.load(f)
         
-        with open(json_path, 'r') as f:
-            data = json.load(f)
+        instructions = payload.get("instructions", [])
+        print(f"   Received {len(instructions)} write instructions.")
+
+        # 2. Execute Instructions
+        found_sheets = {} # Cache found sheets
         
-        meta = data.get("meta", {})
-        transactions = data.get("transactions", [])
+        for instr in instructions:
+            sheet_key = instr.get("sheet_keyword")
+            cell = instr.get("cell")
+            val = instr.get("value")
 
-        # 1. Calculate Turnover
-        income_tx = [t for t in transactions if t.get("type") == "INCOME"]
-        total_turnover = sum(float(t.get("amount", 0)) for t in income_tx)
-        print("CALCULATED TURNOVER: " + str(total_turnover))
-
-        # 2. Fill Basic Info (Targeting Row 3 based on Inspector)
-        if "A_Basic_Info" in wb.sheetnames:
-            ws = wb["A_Basic_Info"]
-            
-            # PIN -> Row 3
-            force_write(ws, "C3", meta.get("pin"), "PIN")
-            
-            # Return Type -> Row 4
-            force_write(ws, "C4", "Original", "Return Type")
-            
-            # Date From -> Row 5
-            force_write(ws, "C5", parse_date(meta.get("periodFrom")), "Period From")
-            
-            # Date To -> Row 6
-            force_write(ws, "C6", parse_date(meta.get("periodTo")), "Period To")
-        else:
-            print("WARNING: Sheet A_Basic_Info missing (Are you using the Mock file?)")
-
-        # 3. Fill Turnover (Smart Search)
-        if "D_Tax_Due" in wb.sheetnames:
-            ws = wb["D_Tax_Due"]
-            target = find_input_cell(ws, "Turnover for the Period")
-            if target:
-                force_write(ws, target, total_turnover, "Turnover")
+            # Find the sheet dynamically (with caching)
+            if sheet_key in found_sheets:
+                ws = found_sheets[sheet_key]
             else:
-                print("SEARCH FAILED: Defaulting Turnover to C6")
-                force_write(ws, "C6", total_turnover, "Turnover (Fallback)")
+                ws = find_sheet_by_keyword(wb, sheet_key)
+                if ws:
+                    found_sheets[sheet_key] = ws
+                    unlock_sheet(ws)
 
+            if ws:
+                strict_write(ws, cell, val)
+            else:
+                print(f"   [SKIP] Sheet matching '{sheet_key}' not found.")
+
+        # 3. Save
+        print(f"   Saving to: {output_path}")
         wb.save(output_path)
-        print("SUCCESS: File generated")
+        print(f"   SUCCESS! File generated.")
 
     except Exception as e:
-        print("CRITICAL FAILURE: " + str(e))
+        print(f"CRITICAL ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 if __name__ == "__main__":

@@ -4,9 +4,57 @@ import { spawn } from "child_process";
 import Filing from "../../models/Filing.js";
 import { parseUserExcel } from "./fileParser.service.js";
 import { generateKraCsv } from "./kraGenerator.service.js";
-import { archiveFiling } from "../compliance/archive.service.js";
 import { createNotification } from "../notifications/notification.controller.js";
 import logger from "../../utils/logger.js";
+
+// ==========================================
+// 🗺️ KRA MAPPING CONFIGURATION
+// ==========================================
+const KRA_FORM_MAPS = {
+  TRADER: {
+    // Turnover Tax (TOT) Form Logic
+    sheets: {
+      basic: "Basic_Info", // Matches keyword in Python
+      tax: "Tax_Due", // Matches keyword in Python
+    },
+    cells: {
+      pin: "C2",
+      return_type: "C3",
+      period_from: "C4",
+      period_to: "C5",
+      turnover: "C6", // Default for TOT
+    },
+  },
+  PROFESSIONAL: {
+    // Income Tax (IT1) Form Logic (Example Placeholder)
+    sheets: {
+      basic: "Basic_Info",
+      tax: "Computation",
+    },
+    cells: {
+      pin: "C2",
+      return_type: "C3",
+      period_from: "C4",
+      period_to: "C5",
+      gross_income: "F15", // Example cell for IT1
+      total_expenses: "F20",
+    },
+  },
+};
+
+// Helper: KRA Date Formatter (DD/MM/YYYY)
+const formatKraDate = (dateStr) => {
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr; // Fallback
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yyyy = d.getFullYear();
+    return `${dd}/${mm}/${yyyy}`;
+  } catch (e) {
+    return dateStr;
+  }
+};
 
 // 1. Upload Filing (Step 1 - Processing)
 export const uploadFiling = async (req, res) => {
@@ -14,7 +62,7 @@ export const uploadFiling = async (req, res) => {
     if (!req.file) throw new Error("No file uploaded");
 
     const { month, year } = req.body;
-    const userTaxMode = req.user.tax_mode;
+    const userTaxMode = req.user.tax_mode || "TRADER"; // Default to TRADER
 
     logger.info(`Processing Filing for User: ${req.user.name}`);
 
@@ -35,7 +83,9 @@ export const uploadFiling = async (req, res) => {
     let totalExpense = 0;
 
     transactions.forEach((t) => {
-      if (t.type === "INCOME") totalIncome += t.amount;
+      // Normalize type check
+      const type = t.type ? t.type.toUpperCase() : "INCOME";
+      if (type === "INCOME") totalIncome += t.amount;
       else totalExpense += t.amount;
     });
 
@@ -43,21 +93,14 @@ export const uploadFiling = async (req, res) => {
     if (userTaxMode === "TRADER") {
       estimatedTax = totalIncome * 0.03; // 3% Turnover Tax
     } else {
-      estimatedTax = Math.max(0, (totalIncome - totalExpense) * 0.3); // 30% Income Tax
+      // Professional: 30% of Profit
+      estimatedTax = Math.max(0, (totalIncome - totalExpense) * 0.3);
     }
-
-    // Generate Legacy CSV (Optional - keeping for safety)
-    const kraFilePath = await generateKraCsv(
-      filing._id,
-      transactions,
-      userTaxMode
-    );
 
     // Update DB
     filing.gross_turnover = totalIncome;
     filing.total_expenses = totalExpense;
     filing.tax_due = estimatedTax;
-    filing.kra_generated_path = kraFilePath;
     filing.status = "GENERATED";
     await filing.save();
 
@@ -78,7 +121,7 @@ export const uploadFiling = async (req, res) => {
   }
 };
 
-// 2. Autofill KRA Template (Step 2 - The Python Engine)
+// 2. Autofill KRA Template (Step 2 - The Universal Engine)
 export const processAutofill = async (req, res) => {
   try {
     const { filingId, transactions } = req.body;
@@ -87,28 +130,20 @@ export const processAutofill = async (req, res) => {
     if (!req.file) throw new Error("No KRA Template uploaded");
     if (!filingId) throw new Error("Filing ID is missing");
 
-    // 2. Fetch Filing & POPULATE User Data
+    // 2. Fetch Filing & User Data
     const filing = await Filing.findById(filingId).populate("user");
-
     if (!filing) throw new Error("Filing record not found");
 
-    // 🟢 FIX: Use 'kra_pin' (with underscore) to match your MongoDB Schema
     const userPin = filing.user.kra_pin;
-
-    // Validation Log
-    logger.info(`Checking PIN for User ${filing.user.name}: ${userPin}`);
-
     if (!userPin || userPin.length < 10) {
-      throw new Error(
-        `Your Profile is missing a valid KRA PIN. Found: '${userPin}'. Please go to Settings and update it first.`
-      );
+      throw new Error("Invalid KRA PIN in user profile.");
     }
 
     logger.info(
-      `🚀 Starting Autofill for User: ${filing.user.name} (${userPin})`
+      `🚀 Starting Universal Autofill for: ${filing.user.name} (${filing.user.tax_mode})`
     );
 
-    // 3. Prepare Paths (Save as .xlsm to preserve macros)
+    // 3. Prepare Paths
     const templatePath = req.file.path;
     const jsonDataPath = path.resolve(
       process.cwd(),
@@ -121,7 +156,7 @@ export const processAutofill = async (req, res) => {
       `filled_return_${filingId}.xlsm`
     );
 
-    // 4. Calculate Dynamic Dates
+    // 4. Calculate Dates
     const monthMap = {
       January: "01",
       February: "02",
@@ -136,77 +171,98 @@ export const processAutofill = async (req, res) => {
       November: "11",
       December: "12",
     };
-
     const mm = monthMap[filing.month];
     const yyyy = filing.year;
-    // Calculate the last day of the specific month
     const lastDay = new Date(yyyy, parseInt(mm), 0).getDate();
 
-    // 5. Build the Payload (REAL DATA ONLY)
-    const payload = {
-      transactions:
-        typeof transactions === "string"
-          ? JSON.parse(transactions)
-          : transactions,
-      meta: {
-        pin: userPin, // <--- Now uses the Correct variable
-        returnType: "Original",
-        returnPeriodFrom: `01/${mm}/${yyyy}`, // Updated key to match Python script expectation if needed, or kept as periodFrom
-        periodFrom: `01/${mm}/${yyyy}`,
-        periodTo: `${lastDay}/${mm}/${yyyy}`,
+    // KRA Format: DD/MM/YYYY
+    const dateFrom = `01/${mm}/${yyyy}`;
+    const dateTo = `${lastDay}/${mm}/${yyyy}`;
+
+    // 5. Select Mapping Based on Mode
+    const mode = filing.user.tax_mode || "TRADER";
+    const map = KRA_FORM_MAPS[mode] || KRA_FORM_MAPS["TRADER"];
+
+    // 6. Recalculate Totals (Secure Calculation on Server)
+    const txns =
+      typeof transactions === "string"
+        ? JSON.parse(transactions)
+        : transactions;
+    let totalIncome = 0;
+    let totalExpense = 0;
+
+    txns.forEach((t) => {
+      if (t.type === "INCOME") totalIncome += parseFloat(t.amount || 0);
+      else totalExpense += parseFloat(t.amount || 0);
+    });
+
+    // 7. Build Instructions Payload (The "Universal" Part)
+    const instructions = [];
+
+    // --- A. Basic Info Instructions ---
+    instructions.push(
+      { sheet_keyword: map.sheets.basic, cell: map.cells.pin, value: userPin },
+      {
+        sheet_keyword: map.sheets.basic,
+        cell: map.cells.return_type,
+        value: "Original",
       },
-    };
+      {
+        sheet_keyword: map.sheets.basic,
+        cell: map.cells.period_from,
+        value: dateFrom,
+      },
+      {
+        sheet_keyword: map.sheets.basic,
+        cell: map.cells.period_to,
+        value: dateTo,
+      }
+    );
 
-    fs.writeFileSync(jsonDataPath, JSON.stringify(payload));
+    // --- B. Tax Data Instructions ---
+    if (mode === "TRADER") {
+      instructions.push({
+        sheet_keyword: map.sheets.tax,
+        cell: map.cells.turnover,
+        value: totalIncome,
+      });
+    } else if (mode === "PROFESSIONAL") {
+      // Example for IT1 form
+      instructions.push(
+        {
+          sheet_keyword: map.sheets.tax,
+          cell: map.cells.gross_income,
+          value: totalIncome,
+        },
+        {
+          sheet_keyword: map.sheets.tax,
+          cell: map.cells.total_expenses,
+          value: totalExpense,
+        }
+      );
+    }
 
-    // 6. Update Status
+    // Write instructions to JSON
+    fs.writeFileSync(jsonDataPath, JSON.stringify({ instructions }));
+
+    // 8. Run Python
     filing.status = "AUTOFILLING";
     await filing.save();
 
-    // 7. Run Python (Using Virtual Environment to fix ModuleNotFoundError)
-    // ------------------------------------------------------------------
-    let pythonCommand = "python"; // fallback
+    const pythonCommand = process.platform === "win32" ? "python" : "python3";
     const pythonScriptPath = path.resolve(
       process.cwd(),
       "python_engine",
       "main.py"
     );
 
-    if (process.platform === "win32") {
-      // Windows: Check for .venv/Scripts/python.exe
-      const venvPython = path.join(
-        process.cwd(),
-        ".venv",
-        "Scripts",
-        "python.exe"
-      );
-      if (fs.existsSync(venvPython)) {
-        pythonCommand = venvPython;
-        logger.info(`🐍 Using Virtual Env Python: ${pythonCommand}`);
-      } else {
-        logger.warn(
-          `⚠️ Virtual Env not found at ${venvPython}, using global python`
-        );
-      }
-    } else {
-      // Linux/Mac: Check for .venv/bin/python
-      const venvPython = path.join(process.cwd(), ".venv", "bin", "python");
-      if (fs.existsSync(venvPython)) {
-        pythonCommand = venvPython;
-      } else {
-        pythonCommand = "python3";
-      }
-    }
+    const pythonProcess = spawn(pythonCommand, [
+      pythonScriptPath,
+      templatePath,
+      jsonDataPath,
+      outputExcelPath,
+    ]);
 
-    const pythonProcess = spawn(
-      pythonCommand,
-      [pythonScriptPath, templatePath, jsonDataPath, outputExcelPath],
-      {
-        cwd: process.cwd(), // Ensure working directory is correct
-      }
-    );
-
-    // Handle Python Logs
     pythonProcess.stdout.on("data", (data) =>
       logger.info(`🐍 ${data.toString().trim()}`)
     );
@@ -214,23 +270,8 @@ export const processAutofill = async (req, res) => {
       logger.error(`🐍 Error: ${data.toString().trim()}`)
     );
 
-    // Handle Completion
     pythonProcess.on("close", async (code) => {
-      if (code === 0) {
-        // Verify the file was actually created
-        if (!fs.existsSync(outputExcelPath)) {
-          logger.error(
-            `Python script completed but file not found: ${outputExcelPath}`
-          );
-          if (!res.headersSent) {
-            return res.status(500).json({
-              success: false,
-              message: "Autofill completed but output file was not created.",
-            });
-          }
-          return;
-        }
-
+      if (code === 0 && fs.existsSync(outputExcelPath)) {
         filing.kra_generated_path = outputExcelPath;
         filing.status = "READY_FOR_DOWNLOAD";
         await filing.save();
@@ -242,14 +283,16 @@ export const processAutofill = async (req, res) => {
         );
 
         if (!res.headersSent) {
-          return res.status(200).json({
-            success: true,
-            downloadUrl: `/api/v1/filing/download/${filingId}`,
-          });
+          res
+            .status(200)
+            .json({
+              success: true,
+              downloadUrl: `/api/v1/filing/download/${filingId}`,
+            });
         }
       } else {
         if (!res.headersSent)
-          return res
+          res
             .status(500)
             .json({ success: false, message: "Autofill engine failed." });
       }
@@ -265,53 +308,25 @@ export const processAutofill = async (req, res) => {
 export const downloadFiling = async (req, res) => {
   try {
     const filing = await Filing.findById(req.params.id);
-
     if (!filing) throw new Error("Filing not found");
 
     if (filing.user.toString() !== req.user.id) {
       return res.status(401).json({ message: "Not authorized" });
     }
 
-    if (!filing.kra_generated_path) {
-      logger.error(`Filing ${filing._id} has no kra_generated_path`);
-      return res.status(404).json({
-        message: "File path not set. Please regenerate the filing.",
-      });
+    if (
+      !filing.kra_generated_path ||
+      !fs.existsSync(filing.kra_generated_path)
+    ) {
+      return res
+        .status(404)
+        .json({ message: "File not found. Please regenerate." });
     }
 
-    // Resolve to absolute path (handles both relative and absolute paths)
-    const filePath = path.isAbsolute(filing.kra_generated_path)
-      ? filing.kra_generated_path
-      : path.resolve(process.cwd(), filing.kra_generated_path);
-
-    logger.info(`Download request for filing ${filing._id}, path: ${filePath}`);
-
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
-      logger.error(`File not found: ${filePath}`);
-      return res.status(404).json({
-        message: `File generated but not found on server. Path: ${filePath}`,
-      });
-    }
-
-    // Set proper filename for download
     const filename = `KRA_Return_${filing.month}_${filing.year}.xlsm`;
-
-    res.download(filePath, filename, (err) => {
-      if (err) {
-        logger.error(`Download error for filing ${filing._id}: ${err.message}`);
-        if (!res.headersSent) {
-          res.status(500).json({
-            message: `Download failed: ${err.message}`,
-          });
-        }
-      }
-    });
+    res.download(filing.kra_generated_path, filename);
   } catch (error) {
-    logger.error(`Download endpoint error: ${error.message}`, error);
-    if (!res.headersSent) {
-      res.status(500).json({ message: error.message });
-    }
+    if (!res.headersSent) res.status(500).json({ message: error.message });
   }
 };
 
@@ -321,12 +336,7 @@ export const getHistory = async (req, res) => {
     const filings = await Filing.find({ user: req.user.id }).sort({
       createdAt: -1,
     });
-
-    res.json({
-      success: true,
-      count: filings.length,
-      data: filings,
-    });
+    res.json({ success: true, count: filings.length, data: filings });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -340,23 +350,11 @@ export const confirmPayment = async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "Filing not found" });
-    if (filing.user.toString() !== req.user.id)
-      return res
-        .status(401)
-        .json({ success: false, message: "Not authorized" });
 
     filing.status = "SUBMITTED";
     await filing.save();
-
-    await createNotification(
-      req.user.id,
-      `Payment confirmed for ${filing.month} return. Reference: ${filing._id}`,
-      "SUCCESS"
-    );
-
     res.json({ success: true, message: "Payment confirmed", data: filing });
   } catch (error) {
-    logger.error(`Payment Confirmation Error: ${error.message}`);
     res.status(500).json({ success: false, message: error.message });
   }
 };
