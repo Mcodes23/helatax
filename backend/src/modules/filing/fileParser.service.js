@@ -1,64 +1,66 @@
 import xlsx from "xlsx";
 import logger from "../../utils/logger.js";
 
-const parseTraderExcel = async (filePath) => {
+/**
+ * Generic Parser to extract rows from an uploaded Excel/CSV file.
+ * Returns an array of normalized objects: { date, description, amount, type }
+ */
+export const parseUserExcel = async (filePath) => {
   try {
     const workbook = xlsx.readFile(filePath);
     const sheetName = workbook.SheetNames[0];
     const worksheet = workbook.Sheets[sheetName];
 
-    // Convert to JSON
+    // Convert to JSON with headers
     const rawData = xlsx.utils.sheet_to_json(worksheet);
-
-    const purchases = [];
-    let totalTurnover = 0;
+    const transactions = [];
 
     rawData.forEach((row) => {
-      // Normalize keys to lowercase
+      // Normalize keys to lowercase to avoid "Date" vs "date" issues
       const cleanRow = {};
       Object.keys(row).forEach((key) => {
         cleanRow[key.trim().toLowerCase()] = row[key];
       });
 
-      // Extract based on your file: Date, Description, Amount, Type
-      const type = cleanRow["type"] || "EXPENSE";
-      const amount = parseFloat(cleanRow["amount"]) || 0;
-      const desc = cleanRow["description"] || "General Goods";
+      // Extract values based on expected column names
       const dateRaw = cleanRow["date"];
+      const description = cleanRow["description"] || "General Transaction";
+      const amount = parseFloat(cleanRow["amount"]) || 0;
+      const type = (cleanRow["type"] || "INCOME").toUpperCase();
 
-      // Logic: INCOME adds to Turnover, EXPENSE adds to Table
-      if (type.toString().toUpperCase().includes("INCOME")) {
-        totalTurnover += amount;
-      } else {
-        purchases.push({
-          supplierPin: "P051123456Z", // Dummy PIN required by KRA
-          supplierName: desc, // Use desc as name
-          invoiceDate: parseExcelDate(dateRaw),
-          invoiceNo: `INV-${Math.floor(Math.random() * 9000) + 1000}`,
-          description: desc,
-          amount: amount,
-        });
-      }
+      transactions.push({
+        date: parseExcelDate(dateRaw),
+        description,
+        amount,
+        type: type.includes("INCOME") ? "INCOME" : "EXPENSE",
+      });
     });
 
-    return {
-      turnover: totalTurnover,
-      purchases: purchases,
-      taxDue: totalTurnover * 0.03,
-    };
+    logger.info(`Parsed ${transactions.length} rows from Excel.`);
+    return transactions;
   } catch (error) {
-    logger.error(`Parsing Error: ${error.message}`);
-    throw new Error("Failed to parse trader file");
+    logger.error(`Excel Parsing Error: ${error.message}`);
+    throw new Error(
+      "Failed to read the sales file. Ensure it has Date, Description, and Amount columns."
+    );
   }
 };
 
+/**
+ * Helper to handle Excel's weird date serial numbers (e.g. 45231)
+ */
 function parseExcelDate(dateVal) {
-  if (!dateVal) return "01/01/2024";
-  if (typeof dateVal === "number") {
-    const date = new Date(Math.round((dateVal - 25569) * 86400 * 1000));
-    return date.toLocaleDateString("en-GB");
-  }
-  return String(dateVal);
-}
+  if (!dateVal) return new Date().toISOString();
 
-export default { parseTraderExcel };
+  if (typeof dateVal === "number") {
+    // Convert Excel serial to JS Date
+    const date = new Date(Math.round((dateVal - 25569) * 86400 * 1000));
+    return date.toISOString();
+  }
+
+  // If it's already a string, try to parse it
+  const parsed = new Date(dateVal);
+  return isNaN(parsed.getTime())
+    ? new Date().toISOString()
+    : parsed.toISOString();
+}
