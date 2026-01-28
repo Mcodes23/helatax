@@ -2,56 +2,62 @@ import fs from "fs";
 import path from "path";
 import { spawn } from "child_process";
 import Filing from "../../models/Filing.js";
-import { parseUserExcel } from "./fileParser.service.js";
+import { parseUserExcel } from "./fileParser.service.js"; // Ensure this matches your parser export
 import { createNotification } from "../notifications/notification.controller.js";
 import logger from "../../utils/logger.js";
 
 // ==========================================
-// KRA MAPPING CONFIGURATION
+// KRA MAPPING CONFIGURATION (From Your Test)
 // ==========================================
 const KRA_FORM_MAPS = {
   TRADER: {
-    // Turnover Tax (TOT) Form Logic
     sheets: {
-      basic: "Basic_Info", // Matches keyword in Python
-      tax: "Tax_Due", // Matches keyword in Python
+      basic: "A_Basic_Info",
+      purchases: "B_Details_of_Purchases",
+      tax: "D_Tax_Due",
     },
     cells: {
-      pin: "C2",
-      return_type: "C3",
-      period_from: "C4",
-      period_to: "C5",
-      turnover: "C6", // Default for TOT
+      pin: "B3",
+      return_type: "B4",
+      period_from: "B5",
+      period_to: "B6",
+      turnover: "C4",
     },
   },
   PROFESSIONAL: {
-    // Income Tax (IT1) Form Logic (Example Placeholder)
     sheets: {
-      basic: "Basic_Info",
+      basic: "A_Basic_Info",
       tax: "Computation",
     },
     cells: {
-      pin: "C2",
-      return_type: "C3",
-      period_from: "C4",
-      period_to: "C5",
-      gross_income: "F15", // Example cell for IT1
+      pin: "B3",
+      return_type: "B4",
+      period_from: "B5",
+      period_to: "B6",
+      gross_income: "F15",
       total_expenses: "F20",
     },
   },
 };
 
-// 1. Upload Filing (Step 1 - Processing)
+// Helper: Format date to DD/MM/YYYY
+const formatKraDate = (dateInput) => {
+  const d = new Date(dateInput);
+  if (isNaN(d.getTime())) return dateInput;
+  const day = String(d.getDate()).padStart(2, "0");
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const year = d.getFullYear();
+  return `${day}/${month}/${year}`;
+};
+
+// 1. Upload Filing (Step 1)
 export const uploadFiling = async (req, res) => {
   try {
     if (!req.file) throw new Error("No file uploaded");
-
     const { month, year } = req.body;
-    const userTaxMode = req.user.tax_mode || "TRADER"; // Default to TRADER
+    const userTaxMode = req.user.tax_mode || "TRADER";
 
     logger.info(`Processing Filing for User: ${req.user.name}`);
-
-    // Create Initial Record
     const filing = await Filing.create({
       user: req.user.id,
       month,
@@ -60,75 +66,43 @@ export const uploadFiling = async (req, res) => {
       raw_file_path: req.file.path,
     });
 
-    // Parse Excel
     const transactions = await parseUserExcel(req.file.path);
-
-    // Calculate Totals
     let totalIncome = 0;
     let totalExpense = 0;
 
     transactions.forEach((t) => {
-      // Normalize type check
-      const type = t.type ? t.type.toUpperCase() : "INCOME";
-      if (type === "INCOME") totalIncome += t.amount;
+      if (t.type === "INCOME") totalIncome += t.amount;
       else totalExpense += t.amount;
     });
 
-    let estimatedTax = 0;
-    if (userTaxMode === "TRADER") {
-      estimatedTax = totalIncome * 0.03; // 3% Turnover Tax
-    } else {
-      // Professional: 30% of Profit
-      estimatedTax = Math.max(0, (totalIncome - totalExpense) * 0.3);
-    }
-
-    // Update DB
     filing.gross_turnover = totalIncome;
     filing.total_expenses = totalExpense;
-    filing.tax_due = estimatedTax;
+    filing.tax_due =
+      userTaxMode === "TRADER"
+        ? totalIncome * 0.03
+        : Math.max(0, (totalIncome - totalExpense) * 0.3);
     filing.status = "GENERATED";
     await filing.save();
 
-    res.status(201).json({
-      success: true,
-      message: "File processed successfully",
-      filingId: filing._id,
-      parsedData: transactions,
-      taxSummary: {
-        income: totalIncome,
-        expense: totalExpense,
-        tax: estimatedTax,
-      },
-    });
+    res
+      .status(201)
+      .json({ success: true, filingId: filing._id, parsedData: transactions });
   } catch (error) {
-    logger.error(`Processing Error: ${error.message}`);
+    logger.error(`Upload Error: ${error.message}`);
     res.status(400).json({ success: false, message: error.message });
   }
 };
 
-// 2. Autofill KRA Template (Step 2 - The Universal Engine)
+// 2. Autofill Engine (Step 2)
 export const processAutofill = async (req, res) => {
   try {
     const { filingId, transactions } = req.body;
+    if (!req.file || !filingId) throw new Error("Missing template or ID");
 
-    // 1. Validate Inputs
-    if (!req.file) throw new Error("No KRA Template uploaded");
-    if (!filingId) throw new Error("Filing ID is missing");
-
-    // 2. Fetch Filing & User Data
     const filing = await Filing.findById(filingId).populate("user");
-    if (!filing) throw new Error("Filing record not found");
+    const mode = filing.user.tax_mode || "TRADER";
+    const map = KRA_FORM_MAPS[mode] || KRA_FORM_MAPS["TRADER"];
 
-    const userPin = filing.user.kra_pin;
-    if (!userPin || userPin.length < 10) {
-      throw new Error("Invalid KRA PIN in user profile.");
-    }
-
-    logger.info(
-      `Starting Universal Autofill for: ${filing.user.name} (${filing.user.tax_mode})`
-    );
-
-    // 3. Prepare Paths
     const templatePath = req.file.path;
     const jsonDataPath = path.resolve(
       process.cwd(),
@@ -138,59 +112,39 @@ export const processAutofill = async (req, res) => {
     const outputExcelPath = path.resolve(
       process.cwd(),
       "uploads",
-      `filled_return_${filingId}.xlsm`
+      `filled_${filingId}.xlsm`
     );
 
-    // 4. Calculate Dates
-    const monthMap = {
-      January: "01",
-      February: "02",
-      March: "03",
-      April: "04",
-      May: "05",
-      June: "06",
-      July: "07",
-      August: "08",
-      September: "09",
-      October: "10",
-      November: "11",
-      December: "12",
-    };
-    const mm = monthMap[filing.month];
-    const yyyy = filing.year;
-    const lastDay = new Date(yyyy, parseInt(mm), 0).getDate();
+    // Prepare Header Dates
+    const monthNames = [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December",
+    ];
+    const monthIndex = monthNames.indexOf(filing.month);
+    const dateFrom = `01/${String(monthIndex + 1).padStart(2, "0")}/${
+      filing.year
+    }`;
+    const lastDay = new Date(filing.year, monthIndex + 1, 0).getDate();
+    const dateTo = `${lastDay}/${String(monthIndex + 1).padStart(2, "0")}/${
+      filing.year
+    }`;
 
-    // KRA Format: DD/MM/YYYY
-    const dateFrom = `01/${mm}/${yyyy}`;
-    const dateTo = `${lastDay}/${mm}/${yyyy}`;
-
-    // 5. Select Mapping Based on Mode
-    const mode = filing.user.tax_mode || "TRADER";
-    const map = KRA_FORM_MAPS[mode] || KRA_FORM_MAPS["TRADER"];
-
-    // 6. Recalculate Totals (Secure Calculation on Server)
-    const txns =
-      typeof transactions === "string"
-        ? JSON.parse(transactions)
-        : transactions;
-    let totalIncome = 0;
-    let totalExpense = 0;
-
-    if (txns && Array.isArray(txns)) {
-      txns.forEach((t) => {
-        if (t.type === "INCOME") totalIncome += parseFloat(t.amount || 0);
-        else totalExpense += parseFloat(t.amount || 0);
-      });
-    } else {
-      totalIncome = filing.gross_turnover; // Fallback to DB value
-    }
-
-    // 7. Build Instructions Payload (The "Universal" Part)
-    const instructions = [];
-
-    // --- A. Basic Info Instructions ---
-    instructions.push(
-      { sheet_keyword: map.sheets.basic, cell: map.cells.pin, value: userPin },
+    const instructions = [
+      {
+        sheet_keyword: map.sheets.basic,
+        cell: map.cells.pin,
+        value: filing.user.kra_pin,
+      },
       {
         sheet_keyword: map.sheets.basic,
         cell: map.cells.return_type,
@@ -205,91 +159,88 @@ export const processAutofill = async (req, res) => {
         sheet_keyword: map.sheets.basic,
         cell: map.cells.period_to,
         value: dateTo,
-      }
-    );
+      },
+    ];
 
-    // --- B. Tax Data Instructions ---
-    if (mode === "TRADER") {
-      instructions.push({
-        sheet_keyword: map.sheets.tax,
-        cell: map.cells.turnover,
-        value: totalIncome,
-      });
-    } else if (mode === "PROFESSIONAL") {
-      // Example for IT1 form
-      instructions.push(
-        {
-          sheet_keyword: map.sheets.tax,
-          cell: map.cells.gross_income,
-          value: totalIncome,
-        },
-        {
-          sheet_keyword: map.sheets.tax,
-          cell: map.cells.total_expenses,
-          value: totalExpense,
+    const txns =
+      typeof transactions === "string"
+        ? JSON.parse(transactions)
+        : transactions;
+    if (txns && Array.isArray(txns) && mode === "TRADER") {
+      let expenseRow = 3;
+      txns.forEach((t) => {
+        if (t.type === "EXPENSE") {
+          instructions.push(
+            {
+              sheet_keyword: map.sheets.purchases,
+              cell: `A${expenseRow}`,
+              value: "P000000000P",
+            },
+            {
+              sheet_keyword: map.sheets.purchases,
+              cell: `B${expenseRow}`,
+              value: t.description,
+            },
+            {
+              sheet_keyword: map.sheets.purchases,
+              cell: `C${expenseRow}`,
+              value: formatKraDate(t.date),
+            },
+            {
+              sheet_keyword: map.sheets.purchases,
+              cell: `D${expenseRow}`,
+              value: "INV-AUTO",
+            },
+            {
+              sheet_keyword: map.sheets.purchases,
+              cell: `E${expenseRow}`,
+              value: t.description,
+            },
+            {
+              sheet_keyword: map.sheets.purchases,
+              cell: `F${expenseRow}`,
+              value: t.amount,
+            }
+          );
+          expenseRow++;
         }
-      );
+      });
     }
 
-    // Write instructions to JSON
+    instructions.push({
+      sheet_keyword: map.sheets.tax,
+      cell: map.cells.turnover,
+      value: filing.gross_turnover,
+    });
+
     fs.writeFileSync(jsonDataPath, JSON.stringify({ instructions }));
-
-    // 8. Run Python
-    filing.status = "AUTOFILLING";
-    await filing.save();
-
-    const pythonCommand = process.platform === "win32" ? "python" : "python3";
-    const pythonScriptPath = path.resolve(
-      process.cwd(),
-      "python_engine",
-      "main.py"
-    );
-
-    const pythonProcess = spawn(pythonCommand, [
-      pythonScriptPath,
-      templatePath,
-      jsonDataPath,
-      outputExcelPath,
-    ]);
-
-    pythonProcess.stdout.on("data", (data) =>
-      logger.info(`[PY] ${data.toString().trim()}`)
-    );
-    pythonProcess.stderr.on("data", (data) =>
-      logger.error(`[PY ERROR] ${data.toString().trim()}`)
+    const pythonProcess = spawn(
+      process.platform === "win32" ? "python" : "python3",
+      [
+        path.resolve(process.cwd(), "python_engine", "main.py"),
+        templatePath,
+        jsonDataPath,
+        outputExcelPath,
+      ]
     );
 
     pythonProcess.on("close", async (code) => {
-      if (code === 0 && fs.existsSync(outputExcelPath)) {
+      if (code === 0) {
         filing.kra_generated_path = outputExcelPath;
         filing.status = "READY_FOR_DOWNLOAD";
         await filing.save();
-
-        await createNotification(
-          filing.user._id,
-          "Your KRA Return is ready!",
-          "SUCCESS"
-        );
-
-        if (!res.headersSent) {
-          res
-            .status(200)
-            .json({
-              success: true,
-              downloadUrl: `/api/v1/filing/download/${filingId}`,
-            });
-        }
+        res
+          .status(200)
+          .json({
+            success: true,
+            downloadUrl: `/api/v1/filing/download/${filingId}`,
+          });
       } else {
-        if (!res.headersSent)
-          res
-            .status(500)
-            .json({ success: false, message: "Autofill engine failed." });
+        res.status(500).json({ success: false, message: "Autofill failed." });
       }
     });
   } catch (error) {
-    logger.error(`Autofill Error: ${error.message}`);
-    if (!res.headersSent)
-      res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -297,41 +248,25 @@ export const processAutofill = async (req, res) => {
 export const downloadFiling = async (req, res) => {
   try {
     const filing = await Filing.findById(req.params.id);
-    if (!filing) throw new Error("Filing not found");
-
-    if (filing.user.toString() !== req.user.id) {
-      return res.status(401).json({ message: "Not authorized" });
-    }
-
-    if (
-      !filing.kra_generated_path ||
-      !fs.existsSync(filing.kra_generated_path)
-    ) {
-      return res
-        .status(404)
-        .json({ message: "File not found. Please regenerate." });
-    }
-
-    const filename = `KRA_Return_${filing.month}_${filing.year}.xlsm`;
-    res.download(filing.kra_generated_path, filename);
+    if (!filing || filing.user.toString() !== req.user.id)
+      return res.status(401).send("Unauthorized");
+    res.download(filing.kra_generated_path);
   } catch (error) {
-    if (!res.headersSent) res.status(500).json({ message: error.message });
+    res.status(500).send(error.message);
   }
 };
 
 // 4. Get History
 export const getHistory = async (req, res) => {
   try {
-    const filings = await Filing.find({ user: req.user.id }).sort({
-      createdAt: -1,
-    });
-    res.json({ success: true, count: filings.length, data: filings });
+    const filings = await Filing.find({ user: req.user.id }).sort("-createdAt");
+    res.json({ success: true, data: filings });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    res.status(500).json({ success: false });
   }
 };
 
-// 5. Confirm Payment
+// 5. Confirm Payment (FIXES THE CRASH)
 export const confirmPayment = async (req, res) => {
   try {
     const filing = await Filing.findById(req.params.id);
@@ -339,10 +274,9 @@ export const confirmPayment = async (req, res) => {
       return res
         .status(404)
         .json({ success: false, message: "Filing not found" });
-
     filing.status = "SUBMITTED";
     await filing.save();
-    res.json({ success: true, message: "Payment confirmed", data: filing });
+    res.json({ success: true, message: "Payment confirmed" });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
