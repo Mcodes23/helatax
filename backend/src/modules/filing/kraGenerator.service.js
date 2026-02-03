@@ -1,5 +1,5 @@
 import { createObjectCsvWriter } from "csv-writer";
-import path from "path";
+import { calculateTransactionTax } from "../../utils/taxCalculator.js";
 
 export const generateKraCsv = async (filingId, transactions, taxMode) => {
   const outputPath = `uploads/KRA_RETURN_${filingId}.csv`;
@@ -31,8 +31,7 @@ export const generateKraCsv = async (filingId, transactions, taxMode) => {
   });
 
   const records = transactions.map((t) => {
-    const rate = taxMode === "TRADER" ? 0.03 : 0.3; // 3% vs 30%
-    const tax = t.type === "INCOME" ? (t.amount * rate).toFixed(2) : 0;
+    const tax = calculateTransactionTax(taxMode, t);
 
     return {
       date: t.date.toISOString().split("T")[0],
