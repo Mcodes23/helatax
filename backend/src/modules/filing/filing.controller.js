@@ -3,8 +3,8 @@ import path from "path";
 import { spawn } from "child_process";
 import Filing from "../../models/Filing.js";
 import { parseUserExcel } from "./fileParser.service.js"; // Ensure this matches your parser export
-import { createNotification } from "../notifications/notification.controller.js";
 import logger from "../../utils/logger.js";
+import { calculateTaxDue } from "../../utils/taxCalculator.js";
 
 // ==========================================
 // KRA MAPPING CONFIGURATION (From Your Test)
@@ -40,6 +40,8 @@ const KRA_FORM_MAPS = {
   },
 };
 
+const PYTHON_TIMEOUT_MS = 60000;
+
 // Helper: Format date to DD/MM/YYYY
 const formatKraDate = (dateInput) => {
   const d = new Date(dateInput);
@@ -48,6 +50,15 @@ const formatKraDate = (dateInput) => {
   const month = String(d.getMonth() + 1).padStart(2, "0");
   const year = d.getFullYear();
   return `${day}/${month}/${year}`;
+};
+
+const safeUnlink = (filePath) => {
+  if (!filePath) return;
+  try {
+    fs.unlinkSync(filePath);
+  } catch (error) {
+    logger.warn(`Cleanup failed for ${filePath}: ${error.message}`);
+  }
 };
 
 // 1. Upload Filing (Step 1)
@@ -77,10 +88,11 @@ export const uploadFiling = async (req, res) => {
 
     filing.gross_turnover = totalIncome;
     filing.total_expenses = totalExpense;
-    filing.tax_due =
-      userTaxMode === "TRADER"
-        ? totalIncome * 0.03
-        : Math.max(0, (totalIncome - totalExpense) * 0.3);
+    filing.tax_due = calculateTaxDue({
+      taxMode: userTaxMode,
+      totalIncome,
+      totalExpense,
+    });
     filing.status = "GENERATED";
     await filing.save();
 
@@ -114,6 +126,13 @@ export const processAutofill = async (req, res) => {
       "uploads",
       `filled_${filingId}.xlsm`
     );
+    let responded = false;
+
+    const respondOnce = (status, payload) => {
+      if (responded) return;
+      responded = true;
+      res.status(status).json(payload);
+    };
 
     // Prepare Header Dates
     const monthNames = [
@@ -221,22 +240,47 @@ export const processAutofill = async (req, res) => {
         templatePath,
         jsonDataPath,
         outputExcelPath,
-      ]
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] }
     );
+    const timeout = setTimeout(() => {
+      logger.error(`Autofill timed out for filing ${filingId}`);
+      pythonProcess.kill("SIGKILL");
+      safeUnlink(jsonDataPath);
+      respondOnce(504, {
+        success: false,
+        message: "Autofill timed out.",
+      });
+    }, PYTHON_TIMEOUT_MS);
+
+    pythonProcess.stdout.on("data", (data) => {
+      logger.info(`Autofill stdout: ${data.toString().trim()}`);
+    });
+
+    pythonProcess.stderr.on("data", (data) => {
+      logger.error(`Autofill stderr: ${data.toString().trim()}`);
+    });
+
+    pythonProcess.on("error", (error) => {
+      clearTimeout(timeout);
+      safeUnlink(jsonDataPath);
+      logger.error(`Autofill spawn error: ${error.message}`);
+      respondOnce(500, { success: false, message: "Autofill failed to start." });
+    });
 
     pythonProcess.on("close", async (code) => {
+      clearTimeout(timeout);
+      safeUnlink(jsonDataPath);
       if (code === 0) {
         filing.kra_generated_path = outputExcelPath;
         filing.status = "READY_FOR_DOWNLOAD";
         await filing.save();
-        res
-          .status(200)
-          .json({
-            success: true,
-            downloadUrl: `/api/v1/filing/download/${filingId}`,
-          });
+        respondOnce(200, {
+          success: true,
+          downloadUrl: `/api/v1/filing/download/${filingId}`,
+        });
       } else {
-        res.status(500).json({ success: false, message: "Autofill failed." });
+        respondOnce(500, { success: false, message: "Autofill failed." });
       }
     });
   } catch (error) {
